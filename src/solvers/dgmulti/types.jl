@@ -1,13 +1,23 @@
-# By default, Julia/LLVM does not use fused multiply-add operations (FMAs).
-# Since these FMAs can increase the performance of many numerical algorithms,
-# we need to opt-in explicitly.
-# See https://ranocha.de/blog/Optimizing_EC_Trixi for further details.
-@muladd begin
+# We include type aliases outside of @muladd blocks to avoid Revise conflicts.
+# See https://github.com/trixi-framework/Trixi.jl/issues/801.
 
 # `DGMulti` refers to both multiple DG types (polynomial/SBP, simplices/quads/hexes) as well as
 # the use of multi-dimensional operators in the solver.
 const DGMulti{NDIMS, ElemType, ApproxType, SurfaceIntegral, VolumeIntegral} =
   DG{<:RefElemData{NDIMS, ElemType, ApproxType}, Mortar, SurfaceIntegral, VolumeIntegral} where {Mortar}
+
+# Type aliases. The first parameter is `ApproxType` since it is more commonly used for dispatch.
+const DGMultiWeakForm{ApproxType, ElemType} =
+DGMulti{NDIMS, ElemType, ApproxType, <:SurfaceIntegralWeakForm, <:VolumeIntegralWeakForm} where {NDIMS}
+
+const DGMultiFluxDiff{ApproxType, ElemType} =
+DGMulti{NDIMS, ElemType, ApproxType, <:AbstractSurfaceIntegral, <:VolumeIntegralFluxDifferencing} where {NDIMS}
+
+  # By default, Julia/LLVM does not use fused multiply-add operations (FMAs).
+# Since these FMAs can increase the performance of many numerical algorithms,
+# we need to opt-in explicitly.
+# See https://ranocha.de/blog/Optimizing_EC_Trixi for further details.
+@muladd begin
 
 # these are necessary for pretty printing
 polydeg(dg::DGMulti) = dg.basis.N
@@ -59,14 +69,6 @@ function DGMulti(element_type::AbstractElemShape,
   return DG(rd, nothing #= mortar =#, surface_integral, volume_integral)
 end
 
-# Type aliases. The first parameter is `ApproxType` since it is more commonly used for dispatch.
-const DGMultiWeakForm{ApproxType, ElemType} =
-  DGMulti{NDIMS, ElemType, ApproxType, <:SurfaceIntegralWeakForm, <:VolumeIntegralWeakForm} where {NDIMS}
-
-const DGMultiFluxDiff{ApproxType, ElemType} =
-  DGMulti{NDIMS, ElemType, ApproxType, <:SurfaceIntegralWeakForm, <:VolumeIntegralFluxDifferencing} where {NDIMS}
-
-
 # now that DGMulti is defined, we can define constructors for VertexMappedMesh which use dg::DGMulti
 """
     VertexMappedMesh(vertex_coordinates, EToV, dg::DGMulti;
@@ -108,6 +110,71 @@ Base.size(A::LazyMatrixLinearCombo) = size(first(A.matrices))
     val = val + A.coeffs[k] * getindex(A.matrices[k], i, j)
   end
   return val
+end
+
+"""
+    SurfaceIntegralHybrid(surface_flux=flux_central, surface_dissipation=nothing)
+
+This evaluates a hybrid surface flux, which evaluates the usual surface flux at an interface,
+as well as a surface dissipation term at a set of "hybrid" interface nodes.
+"""
+struct SurfaceIntegralHybrid{SurfaceIntegral, SurfaceDissipation, OperatorType, FaceCache} <: AbstractSurfaceIntegral
+  surface_integral::SurfaceIntegral
+  surface_dissipation::SurfaceDissipation
+  interp_to_hybrid_nodes::OperatorType    # interpolation from face nodes to hybrid face nodes
+  project_from_hybrid_nodes::OperatorType # projection from hybrid face nodes to original face nodes
+  face_cache::FaceCache # cache to store temporary face variables
+end
+
+# We pass in dg::DGMulti since we need the polynomial degree and information about the approximation type
+# to construct interpolation and projection operators used for this type of "discrete" surface integral.
+function SurfaceIntegralHybrid(surface_dissipation,
+                               dg::DGMulti{2, Quad, <:SBP}, equations;
+                               hybrid_quadrature = StartUpDG.gauss_quad(0, 0, dg.basis.N),
+                               uEltype = real(dg))
+  nvars = nvariables(equations)
+
+  polydeg = dg.basis.N
+  face_nodes, face_weights = StartUpDG.gauss_lobatto_quad(0, 0, polydeg)
+  hybrid_face_nodes, hybrid_face_weights = hybrid_quadrature
+
+  # interpolation and projection matrices
+  inv_face_mass_matrix = diagm(inv.(face_weights))
+  face_vandermonde_matrix = StartUpDG.vandermonde(Line(), polydeg, face_nodes)
+  interp_to_hybrid_nodes = StartUpDG.vandermonde(Line(), polydeg, hybrid_face_nodes) / face_vandermonde_matrix
+  project_from_hybrid_nodes = inv_face_mass_matrix * (interp_to_hybrid_nodes' * diagm(hybrid_face_weights))
+
+  # cache for temporary storage of variables.
+  # TODO: DGMulti. Assumes that the number of hybrid nodes is the same as the number of face nodes
+  # This can be made true for 2D elements, but not for 3D simplices.
+  entropy_vars_mine = StructArray{SVector{nvars, uEltype}}(ntuple(_->zeros(uEltype, length(face_nodes)), nvars))
+  interpolated_entropy_vars_mine = StructArray{SVector{nvars, uEltype}}(ntuple(_->zeros(uEltype, length(hybrid_face_nodes)), nvars))
+  face_cache = (; entropy_vars_mine,
+                  entropy_vars_other = similar(entropy_vars_mine),
+                  interpolated_entropy_vars_mine,
+                  interpolated_entropy_vars_other = similar(interpolated_entropy_vars_mine),
+                  flux_tmp = similar(interpolated_entropy_vars_mine),
+                  projected_flux_tmp = similar(entropy_vars_mine))
+
+  return SurfaceIntegralHybrid(dg.surface_integral, surface_dissipation,
+                               interp_to_hybrid_nodes, project_from_hybrid_nodes,
+                               face_cache)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", integral::SurfaceIntegralHybrid)
+  @nospecialize integral # reduce precompilation time
+
+  if get(io, :compact, false)
+    show(io, integral)
+  else
+    setup = [
+            "surface integral" => integral.surface_integral,
+            "surface dissipation" => integral.surface_dissipation,
+            "operator type" => typeof(integral.interp_to_hybrid_nodes),
+            "cache type" => typeof(integral.face_cache)
+            ]
+    summary_box(io, "SurfaceIntegralHybrid", setup)
+  end
 end
 
 

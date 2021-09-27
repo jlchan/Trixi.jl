@@ -40,6 +40,7 @@ end
 
 # iteration over quantities in a single element
 @inline nnodes(basis::RefElemData) = basis.Np
+@inline each_face(dg::DGMulti) = Base.OneTo(dg.basis.Nfaces)
 @inline each_face_node(mesh::AbstractMeshData, dg::DGMulti, cache) = Base.OneTo(dg.basis.Nfq)
 @inline each_quad_node(mesh::AbstractMeshData, dg::DGMulti, cache) = Base.OneTo(dg.basis.Nq)
 
@@ -204,6 +205,67 @@ function calc_interface_flux!(cache, surface_integral::SurfaceIntegralWeakForm,
   end
 end
 
+function calc_interface_flux!(cache, surface_integral_hybrid::SurfaceIntegralHybrid,
+                              mesh::VertexMappedMesh,
+                              have_nonconservative_terms::Val{false}, equations,
+                              dg::DGMulti{NDIMS}) where {NDIMS}
+
+  # compute original surface integral contribution
+  calc_interface_flux!(cache, surface_integral_hybrid.surface_integral,
+                       mesh, have_nonconservative_terms, equations, dg)
+
+  # compute additional dissipation contributions
+  md = mesh.md
+  @unpack mapM, mapP, nxyzJ, Jf = md
+  @unpack u_face_values, flux_face_values = cache
+  @unpack surface_dissipation = surface_integral_hybrid
+  @unpack interp_to_hybrid_nodes, project_from_hybrid_nodes = surface_integral_hybrid
+  @unpack flux_tmp, projected_flux_tmp, entropy_vars_mine, entropy_vars_other = surface_integral_hybrid.face_cache
+  @unpack interpolated_entropy_vars_mine, interpolated_entropy_vars_other = surface_integral_hybrid.face_cache
+
+  n_nodes_per_face = length(entropy_vars_mine)
+
+  for e in Base.OneTo(mesh.md.num_elements)
+    for f in each_face(dg)
+      for i in eachindex(entropy_vars_mine)
+        local_face_node_index = i + (f - 1) * n_nodes_per_face
+
+        # inner (idM -> minus) and outer (idP -> plus) indices
+        idM, idP = mapM[local_face_node_index, e], mapP[local_face_node_index, e]
+
+        # TODO: DGMulti. This should be optimized, `cons2entropy` is called 2x per face.
+        entropy_vars_mine[i]  = cons2entropy(u_face_values[idM], equations)
+        entropy_vars_other[i] = cons2entropy(u_face_values[idP], equations)
+      end
+
+      # compute local entropy projection
+      # TODO: DGMulti. This should be optimized, the projection is computed 2x per face.
+      apply_to_each_field(mul_by!(interp_to_hybrid_nodes), interpolated_entropy_vars_mine, entropy_vars_mine)
+      apply_to_each_field(mul_by!(interp_to_hybrid_nodes), interpolated_entropy_vars_other, entropy_vars_other)
+
+      # convert from entropy to conservative variables
+      for i in eachindex(interpolated_entropy_vars_mine)
+        local_face_node_index = i + (f - 1) * n_nodes_per_face
+        idM = mapM[local_face_node_index, e]
+        normal = SVector{NDIMS}(getindex.(nxyzJ, idM)) / Jf[idM]
+
+        # evaluate fluxes in terms of interpolated entropy variables
+        uM = entropy2cons(interpolated_entropy_vars_mine[i], equations)
+        uP = entropy2cons(interpolated_entropy_vars_other[i], equations)
+        flux_tmp[i] = surface_dissipation(uM, uP, normal, equations)
+      end
+
+      # project and accumulate the result
+      apply_to_each_field(mul_by!(project_from_hybrid_nodes), projected_flux_tmp, flux_tmp)
+      for i in eachindex(projected_flux_tmp)
+        local_face_node_index = i + (f-1) * n_nodes_per_face
+        idM = mapM[local_face_node_index, e]
+        flux_face_values[local_face_node_index, e] = flux_face_values[local_face_node_index, e] + projected_flux_tmp[i] * Jf[idM]
+      end
+    end
+  end
+end
+
 function calc_interface_flux!(cache, surface_integral::SurfaceIntegralWeakForm,
                               mesh::VertexMappedMesh,
                               have_nonconservative_terms::Val{true}, equations,
@@ -262,13 +324,19 @@ function prolong2interfaces!(cache, u, mesh::AbstractMeshData, equations, surfac
   end
 end
 
+# SurfaceIntegralHybrid contains the original surface integral as a field, so we dispatch on that.
+# This dispatch approach avoids method ambiguity.
+@inline function calc_surface_integral!(du, u, surface_integral_hybrid::SurfaceIntegralHybrid,
+                                        mesh::VertexMappedMesh, equations, dg::DGMulti, cache)
+  calc_surface_integral!(du, u, surface_integral_hybrid.surface_integral, mesh, equations, dg, cache)
+end
+
 # Specialize for nodal SBP discretizations. Uses that du = LIFT*u is equivalent to
 # du[Fmask,:] .= u ./ rd.wq[rd.Fmask]
 function calc_surface_integral!(du, u, surface_integral::SurfaceIntegralWeakForm,
                                 mesh::VertexMappedMesh, equations,
-                                dg::DGMulti{NDIMS,<:AbstractElemShape, <:SBP}, cache) where {NDIMS}
+                                dg::DGMulti{NDIMS, <:AbstractElemShape, <:SBP}, cache) where {NDIMS}
   rd = dg.basis
-  md = mesh.md
   @unpack flux_face_values, lift_scalings = cache
   @threaded for e in eachelement(mesh, dg, cache)
     for i in each_face_node(mesh, dg, cache)
