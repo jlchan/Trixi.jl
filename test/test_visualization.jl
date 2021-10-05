@@ -25,7 +25,7 @@ isdir(outdir) && rm(outdir, recursive=true)
     "TreeMesh" => ("tree_2d_dgsem", "elixir_euler_blast_wave_amr.jl"),
     "StructuredMesh" => ("structured_2d_dgsem", "elixir_euler_source_terms_waving_flag.jl"),
     "UnstructuredMesh" => ("unstructured_2d_dgsem", "elixir_euler_basic.jl"),
-    "P4estMesh" => ("p4est_2d_dgsem", "elixir_euler_source_terms_nonperiodic.jl"),
+    "P4estMesh" => ("p4est_2d_dgsem", "elixir_euler_source_terms_nonconforming_unstructured_flag.jl"),
     "DGMulti" => ("dgmulti_2d", "elixir_euler_weakform.jl"),
   )
 
@@ -39,6 +39,7 @@ isdir(outdir) && rm(outdir, recursive=true)
     if mesh == "TreeMesh"
       @test PlotData2D(sol) isa Trixi.PlotData2DCartesian
       @test PlotData2D(sol; nvisnodes=0, grid_lines=false, solution_variables=cons2cons) isa Trixi.PlotData2DCartesian
+      @test Trixi.PlotData2DTriangulated(sol) isa Trixi.PlotData2DTriangulated
     else
       @test PlotData2D(sol) isa Trixi.PlotData2DTriangulated
       @test PlotData2D(sol; nvisnodes=0, solution_variables=cons2cons) isa Trixi.PlotData2DTriangulated
@@ -101,11 +102,19 @@ isdir(outdir) && rm(outdir, recursive=true)
     end
 
     @testset "1D plot from 2D solution" begin
-      if mesh != "DGMulti"
+      if mesh != "DGMulti" && mesh != "P4estMesh"
         @testset "Create 1D plot as slice" begin
           @test_nowarn_debug PlotData1D(sol, slice=:y, point=(0.5, 0.0)) isa PlotData1D
           pd1D = PlotData1D(sol, slice=:y, point=(0.5, 0.0))
           @test_nowarn_debug Plots.plot(pd1D)
+        end
+      elseif mesh == "P4estMesh"
+        @testset "Create 1D plot as slice" begin
+          # Plot along slice axis is broken for unstructured meshes.
+          # See https://github.com/trixi-framework/Trixi.jl/issues/893
+          @test_broken PlotData1D(sol, slice=:y, point=(0.5, 0.0)) isa PlotData1D
+          @test_broken pd1D = PlotData1D(sol, slice=:y, point=(0.5, 0.0))
+          @test_broken Plots.plot(pd1D)
         end
       end
 
@@ -262,12 +271,12 @@ isdir(outdir) && rm(outdir, recursive=true)
                                visualization = VisualizationCallback(interval=20,
                                                clims=(0,1),
                                                plot_creator=Trixi.save_plot),
-                               tspan=(0.0, 2.0))
+                               tspan=(0.0, 3.0))
 
     @testset "elixir_advection_amr_visualization.jl with save_plot" begin
       @test isfile(joinpath(outdir, "solution_000000.png"))
       @test isfile(joinpath(outdir, "solution_000020.png"))
-      @test isfile(joinpath(outdir, "solution_000024.png"))
+      @test isfile(joinpath(outdir, "solution_000022.png"))
     end
 
     @testset "show" begin
@@ -293,6 +302,10 @@ isdir(outdir) && rm(outdir, recursive=true)
 
     # test interactive surface plot
     @test_nowarn_debug Trixi.iplot(sol)
+
+    # also test when using PlotData2D object
+    @test PlotData2D(sol) isa Trixi.PlotData2DTriangulated
+    @test_nowarn_debug Makie.plot(PlotData2D(sol))
 
     # test interactive ScalarPlotData2D plotting
     semi = sol.prob.p

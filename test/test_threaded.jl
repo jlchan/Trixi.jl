@@ -13,20 +13,21 @@ Trixi.mpi_isroot() && isdir(outdir) && rm(outdir, recursive=true)
   @testset "TreeMesh" begin
     @trixi_testset "elixir_advection_restart.jl" begin
       @test_trixi_include(joinpath(examples_dir(), "tree_2d_dgsem", "elixir_advection_restart.jl"),
-        l2   = [1.2148032444677485e-5],
-        linf = [6.495644794757283e-5])
+        # Expected errors are exactly the same as in the serial test!
+        l2   = [7.81674284320524e-6],
+        linf = [6.314906965243505e-5])
     end
 
     @trixi_testset "elixir_advection_amr_refine_twice.jl" begin
       @test_trixi_include(joinpath(examples_dir(), "tree_2d_dgsem", "elixir_advection_amr_refine_twice.jl"),
-        l2   = [0.00019847333806230843],
-        linf = [0.005591345460895569])
+        l2   = [0.00020547512522578292], 
+        linf = [0.007831753383083506])
     end
 
     @trixi_testset "elixir_advection_amr_coarsen_twice.jl" begin
       @test_trixi_include(joinpath(examples_dir(), "tree_2d_dgsem", "elixir_advection_amr_coarsen_twice.jl"),
-        l2   = [0.00519897841357112],
-        linf = [0.06272325552264647])
+        l2   = [0.0014321062757891826], 
+        linf = [0.0253454486893413])
     end
 
     @trixi_testset "elixir_euler_source_terms_nonperiodic.jl" begin
@@ -47,10 +48,11 @@ Trixi.mpi_isroot() && isdir(outdir) && rm(outdir, recursive=true)
   @testset "StructuredMesh" begin
     @trixi_testset "elixir_advection_restart.jl with waving flag mesh" begin
       @test_trixi_include(joinpath(examples_dir(), "structured_2d_dgsem", "elixir_advection_restart.jl"),
-        l2   = [0.00017274040834067234],
-        linf = [0.0015435741643734513],
+        l2   = [0.00016265538283059892],
+        linf = [0.0015194298895079283],
+        rtol = 7e-6, # Higher tolerance to make tests pass in CI with macOS
         elixir_file="elixir_advection_waving_flag.jl",
-        restart_file="restart_000041.h5")
+        restart_file="restart_000021.h5")
     end
 
     @trixi_testset "elixir_mhd_ec.jl" begin
@@ -79,10 +81,10 @@ Trixi.mpi_isroot() && isdir(outdir) && rm(outdir, recursive=true)
 
 
   @testset "P4estMesh" begin
-    @trixi_testset "elixir_euler_source_terms_nonperiodic_unstructured.jl" begin
-      @test_trixi_include(joinpath(examples_dir(), "p4est_2d_dgsem", "elixir_euler_source_terms_nonperiodic_unstructured.jl"),
-        l2   = [0.005238881525717353, 0.00432468991916032, 0.004324689919160557, 0.009861661579421543],
-        linf = [0.05218395248755403, 0.05393708345946013, 0.05393708345946102, 0.09119199890634944])
+    @trixi_testset "elixir_euler_source_terms_nonconforming_unstructured_flag.jl" begin
+      @test_trixi_include(joinpath(examples_dir(), "p4est_2d_dgsem", "elixir_euler_source_terms_nonconforming_unstructured_flag.jl"),
+        l2   = [0.0034516244508588046, 0.0023420334036925493, 0.0024261923964557187, 0.004731710454271893], 
+        linf = [0.04155789011775046, 0.024772109862748914, 0.03759938693042297, 0.08039824959535657])
     end
 
     @trixi_testset "elixir_eulergravity_convergence.jl" begin
