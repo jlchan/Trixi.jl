@@ -105,6 +105,101 @@ function Trixi.create_cache(mesh::DGMultiMesh, equations::CompressibleEulerEquat
             velocity, grad_velocity)
 end
 
+function calc_viscous_terms_naive!(du, u, mesh, equations, dg, cache)
+
+  @unpack v1, v2, v3, T = cache
+  @unpack dv1dx, dv2dy, dv3dz, div_velocity = cache
+  @unpack dv1dy_plus_dv2dx, dv1dz_plus_dv3dx, dv2dz_plus_dv3dy = cache
+  @unpack tau_11, tau_12, tau_13, tau_22, tau_23, tau_33 = cache
+  @unpack dTdx, dTdy, dTdz = cache
+  @unpack kappa_tilde_x, kappa_tilde_y, kappa_tilde_z = cache
+
+  # rename variables
+  energy_flux_x, energy_flux_y, energy_flux_z = kappa_tilde_x, kappa_tilde_y, kappa_tilde_z
+
+  @unpack rhs2, rhs3, rhs4, rhs5, rhs_heat = cache
+
+  @unpack rxJ, syJ, tzJ = mesh.md
+  @unpack invJ = cache
+
+  D = dg.basis.approximationType # FDSBP operator
+
+  @trixi_timeit timer() "compute primitive vars" begin
+  @threaded for i in eachindex(v1)
+    rho, rho_v1, rho_v2, rho_v3, rho_e = u[i]
+    inv_rho = inv(rho)
+    v1[i] = rho_v1 * inv_rho
+    v2[i] = rho_v2 * inv_rho
+    v3[i] = rho_v3 * inv_rho
+    T[i]  = temperature(u[i], equations)
+  end
+  end
+
+  @trixi_timeit timer() "compute velocity derivs" begin
+  # compute velocity derivatives
+  mul!(dv1dx, D, 1, v1)
+  mul!(dv2dy, D, 2, v2)
+  mul!(dv3dz, D, 3, v3)
+  mul!(dv1dy_plus_dv2dx, D, 2, v1)
+  mul!(dv1dy_plus_dv2dx, D, 1, v2, beta=true) # accumulates into the output
+  mul!(dv1dz_plus_dv3dx, D, 3, v1)
+  mul!(dv1dz_plus_dv3dx, D, 1, v3, beta=true) # accumulates into the output
+  mul!(dv2dz_plus_dv3dy, D, 3, v2)
+  mul!(dv2dz_plus_dv3dy, D, 2, v3, beta=true) # accumulates into the output
+
+  # temperature derivatives
+  mul!(dTdx, D, 1, T)
+  mul!(dTdy, D, 2, T)
+  mul!(dTdz, D, 3, T)
+  end
+
+  @trixi_timeit timer() "compute tau and kappatilde" begin
+  @threaded for i in eachindex(tau_11)
+    q = SVector{5}(u[i][1], v1[i], v2[i], v3[i], T[i])
+    mu, lambda, kappa = evaluate_viscous_coefficients(q, equations)
+
+    div_velocity = dv1dx[i] + dv2dy[i] + dv3dz[i]
+    tau_11[i] = 2 * mu * dv1dx[i] + lambda * div_velocity
+    tau_22[i] = 2 * mu * dv2dy[i] + lambda * div_velocity
+    tau_33[i] = 2 * mu * dv3dz[i] + lambda * div_velocity
+    tau_12[i] = mu * dv1dy_plus_dv2dx[i]
+    tau_13[i] = mu * dv1dz_plus_dv3dx[i]
+    tau_23[i] = mu * dv2dz_plus_dv3dy[i]
+
+    energy_flux_x[i] = tau_11[i] * v1[i] + tau_12[i] * v2[i] + tau_13[i] * v3[i] + kappa * dTdx[i]
+    energy_flux_y[i] = tau_12[i] * v1[i] + tau_22[i] * v2[i] + tau_23[i] * v3[i] + kappa * dTdy[i]
+    energy_flux_z[i] = tau_13[i] * v1[i] + tau_23[i] * v2[i] + tau_33[i] * v3[i] + kappa * dTdz[i]
+  end
+  end
+
+  @trixi_timeit timer() "compute second derivatives" begin
+  # viscous momentum terms - ∑_j D_j * τ_ij
+  fill!(rhs2, zero(eltype(rhs2)))
+  fill!(rhs3, zero(eltype(rhs3)))
+  fill!(rhs4, zero(eltype(rhs4)))
+  fill!(rhs5, zero(eltype(rhs5)))
+  mul!(rhs2, D, 1, tau_11)
+  mul!(rhs2, D, 2, tau_12, beta=true)
+  mul!(rhs2, D, 3, tau_13, beta=true)
+  mul!(rhs3, D, 1, tau_12)
+  mul!(rhs3, D, 2, tau_22, beta=true)
+  mul!(rhs3, D, 3, tau_23, beta=true)
+  mul!(rhs4, D, 1, tau_13)
+  mul!(rhs4, D, 2, tau_23, beta=true)
+  mul!(rhs4, D, 3, tau_33, beta=true)
+  # compute energy rhs
+  mul!(rhs5, D, 1, energy_flux_x)
+  mul!(rhs5, D, 2, energy_flux_y, beta=true)
+  mul!(rhs5, D, 3, energy_flux_z, beta=true)
+  end
+
+  @threaded for i in eachindex(du)
+    du[i] = du[i] + SVector{5}(0.0, rhs2[i], rhs3[i], rhs4[i], rhs5[i])
+  end
+
+  return nothing
+end
+
 function calc_viscous_terms_edoh!(du, u, mesh, equations, dg, cache)
 
   @unpack v1, v2, v3, T = cache
