@@ -2,11 +2,11 @@
 # using Pkg;  Pkg.activate(temp=true)
 using OrdinaryDiffEq, DiffEqCallbacks
 using Trixi
+using LinearAlgebra
 
 #################################################################################
 # hack viscous terms into the rhs
 
-using StaticArrays
 using LinearAlgebra: mul!
 using Trixi: DGMultiFluxDiffPeriodicFDSBP, BoundaryConditionPeriodic
 using Trixi: @trixi_timeit, timer, @threaded
@@ -372,7 +372,21 @@ function initial_condition_taylor_green_vortex(x, t, equations::CompressibleEule
 
   return prim2cons(SVector(rho, v1, v2, v3, p), equations)
 end
-initial_condition = initial_condition_taylor_green_vortex
+
+# 3D version of KHI
+function initial_condition_kelvin_helmholtz_instability(x, t, equations::CompressibleEulerEquations3D)
+  slope = 15
+  B = tanh(slope * x[2] + 7.5) - tanh(slope * x[2] - 7.5)
+  rho = 0.5 + 0.75 * B
+  v1 = 0.5 * (B - 1)
+  v2 = 0.1 * sin(2 * pi * x[1]) * sin(2 * pi * x[3])
+  v3 = 0.1 * sin(2 * pi * x[1]) * sin(2 * pi * x[3])
+  p  = 1.0
+  return prim2cons(SVector(rho, v1, v2, v3, p), equations)
+end
+
+initial_condition = initial_condition_kelvin_helmholtz_instability
+# initial_condition = initial_condition_taylor_green_vortex
 
 volume_flux  = flux_ranocha
 dg = DGMulti(element_type = Hex(),
@@ -419,20 +433,29 @@ function compute_tgv_quantities(u, t, integrator)
   end
 
   # integrate quantities
-  ke, enstrophy = 0.0, 0.0
+  ke, enstrophy, S = ntuple(_->0.0, 3)
+  rho_squared, T_squared, rho_avg, T_avg = ntuple(_->0.0, 4)
   for i in eachindex(u)
     rho, rho_v1, rho_v2, rho_v3, rho_e = u[i]
     ke += mesh.md.wJq[i] * (rho_v1^2 + rho_v2^2 + rho_v3^2) / rho
+    S += mesh.md.wJq[i] * Trixi.entropy(u[i], equations)
+
+    T = temperature(u[i], equations)
+    rho_squared += mesh.md.wJq[i] * rho^2
+    rho_avg += mesh.md.wJq[i] * rho
+    T_squared += mesh.md.wJq[i] * T^2
+    T_avg += mesh.md.wJq[i] * T
     for j in 1:3, k in 1:3
       enstrophy += mesh.md.wJq[i] * grad_velocity[j, k][i]^2
     end
   end
-
-  return ke, enstrophy
+  rho_RMS = rho_squared - rho_avg^2
+  T_RMS = T_squared - T_avg^2
+  return ke, enstrophy, S, rho_RMS, T_RMS
 end
 
-tsave = LinRange(tspan..., 100)
-saved_values = SavedValues(Float64, Tuple{Float64, Float64})
+tsave = LinRange(tspan..., 50)
+saved_values = SavedValues(Float64, NTuple{5, Float64})
 saving_callback = SavingCallback(compute_tgv_quantities, saved_values, saveat=tsave)
 
 callbacks = CallbackSet(summary_callback, analysis_callback,
