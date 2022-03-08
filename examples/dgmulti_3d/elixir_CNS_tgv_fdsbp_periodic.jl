@@ -7,6 +7,7 @@ using LinearAlgebra
 #################################################################################
 # hack viscous terms into the rhs
 
+using StaticArrays
 using LinearAlgebra: mul!
 using Trixi: DGMultiFluxDiffPeriodicFDSBP, BoundaryConditionPeriodic
 using Trixi: @trixi_timeit, timer, @threaded
@@ -104,8 +105,10 @@ function Trixi.create_cache(mesh::DGMultiMesh, equations::CompressibleEulerEquat
             velocity, grad_velocity)
 end
 
-function calc_viscous_terms_naive!(du, u, mesh, equations, dg, cache)
+calc_viscous_terms_naive!(du, u, semi, t) =
+  calc_viscous_terms_naive!(du, u, Trixi.mesh_equations_solver_cache(semi)...)
 
+function calc_viscous_terms_naive!(du, u, mesh, equations, dg, cache)
   @unpack v1, v2, v3, T = cache
   @unpack dv1dx, dv2dy, dv3dz, div_velocity = cache
   @unpack dv1dy_plus_dv2dx, dv1dz_plus_dv3dx, dv2dz_plus_dv3dy = cache
@@ -204,8 +207,10 @@ function calc_viscous_terms_naive!(du, u, mesh, equations, dg, cache)
   return nothing
 end
 
-function calc_viscous_terms_edoh!(du, u, mesh, equations, dg, cache)
+calc_viscous_terms_edoh!(du, u, semi, t) =
+  calc_viscous_terms_edoh!(du, u, Trixi.mesh_equations_solver_cache(semi)...)
 
+function calc_viscous_terms_edoh!(du, u, mesh, equations, dg, cache)
   @unpack v1, v2, v3, T = cache
   @unpack dv1dx, dv2dy, dv3dz, div_velocity = cache
   @unpack dv1dy_plus_dv2dx, dv1dz_plus_dv3dx, dv2dz_plus_dv3dy = cache
@@ -330,12 +335,10 @@ function calc_viscous_terms_edoh!(du, u, mesh, equations, dg, cache)
   return nothing
 end
 
-calc_viscous_terms! = calc_viscous_terms_naive!
-calc_viscous_terms! = calc_viscous_terms_edoh!
+rhs_naive!(du, u, semi, t) = rhs_naive!(du, u, t, Trixi.mesh_equations_solver_cache(semi)...)
+rhs_split!(du, u, semi, t) = rhs_split!(du, u, t, Trixi.mesh_equations_solver_cache(semi)...)
 
-function Trixi.rhs!(du, u, t, mesh, equations::CompressibleEulerEquations3D,
-                    initial_condition, bcs::BoundaryConditionPeriodic, source::Nothing,
-                    dg::DGMulti, cache)
+function rhs_naive!(du, u, t, mesh, equations::CompressibleEulerEquations3D, dg::DGMulti, cache)
 
   @trixi_timeit timer() "reset ∂u/∂t" Trixi.reset_du!(du, dg, cache)
 
@@ -346,9 +349,23 @@ function Trixi.rhs!(du, u, t, mesh, equations::CompressibleEulerEquations3D,
   @trixi_timeit timer() "Jacobian" Trixi.invert_jacobian!(
     du, mesh, equations, dg, cache)
 
-  # TODO: add viscous terms here
-  # println("running with naive")
-  @trixi_timeit timer() "viscous terms" calc_viscous_terms!(du, u, mesh, equations, dg, cache)
+  @trixi_timeit timer() "viscous terms" calc_viscous_terms_naive!(du, u, mesh, equations, dg, cache)
+
+  return nothing
+end
+
+function rhs_split!(du, u, t, mesh, equations::CompressibleEulerEquations3D, dg::DGMulti, cache)
+
+  @trixi_timeit timer() "reset ∂u/∂t" Trixi.reset_du!(du, dg, cache)
+
+  @trixi_timeit timer() "volume integral" Trixi.calc_volume_integral!(
+    du, u, mesh, Trixi.have_nonconservative_terms(equations), equations,
+    dg.volume_integral, dg, cache)
+
+  @trixi_timeit timer() "Jacobian" Trixi.invert_jacobian!(
+    du, mesh, equations, dg, cache)
+
+  @trixi_timeit timer() "viscous terms" calc_viscous_terms_edoh!(du, u, mesh, equations, dg, cache)
 
   return nothing
 end
@@ -379,19 +396,19 @@ function initial_condition_kelvin_helmholtz_instability(x, t, equations::Compres
   B = tanh(slope * x[2] + 7.5) - tanh(slope * x[2] - 7.5)
   rho = 0.5 + 0.75 * B
   v1 = 0.5 * (B - 1)
-  v2 = 0.1 * sin(2 * pi * x[1]) * sin(2 * pi * x[3])
-  v3 = 0.1 * sin(2 * pi * x[1]) * sin(2 * pi * x[3])
+  v2 = 0.1 * sin(2 * x[1]) * sin(2 * x[3])
+  v3 = 0.1 * sin(2 * x[1]) * sin(2 * x[3])
   p  = 1.0
   return prim2cons(SVector(rho, v1, v2, v3, p), equations)
 end
 
 initial_condition = initial_condition_kelvin_helmholtz_instability
-# initial_condition = initial_condition_taylor_green_vortex
+initial_condition = initial_condition_taylor_green_vortex
 
 volume_flux  = flux_ranocha
 dg = DGMulti(element_type = Hex(),
              approximation_type = periodic_derivative_operator(
-               derivative_order=1, accuracy_order=4, xmin=-pi, xmax=pi, N=128),
+               derivative_order=1, accuracy_order=4, xmin=-pi, xmax=pi, N=32),
              surface_flux = flux_lax_friedrichs,
              volume_integral = VolumeIntegralFluxDifferencing(volume_flux))
 
@@ -404,7 +421,6 @@ semi = SemidiscretizationHyperbolic(mesh, equations, initial_condition, dg)
 # ODE solvers, callbacks etc.
 
 tspan = (0.0, 20.0)
-ode = semidiscretize(semi, tspan)
 
 summary_callback = SummaryCallback()
 
@@ -442,9 +458,9 @@ function compute_tgv_quantities(u, t, integrator)
 
     T = temperature(u[i], equations)
     rho_squared += mesh.md.wJq[i] * rho^2
-    rho_avg += mesh.md.wJq[i] * rho
-    T_squared += mesh.md.wJq[i] * T^2
-    T_avg += mesh.md.wJq[i] * T
+    rho_avg     += mesh.md.wJq[i] * rho
+    T_squared   += mesh.md.wJq[i] * T^2
+    T_avg       += mesh.md.wJq[i] * T
     for j in 1:3, k in 1:3
       enstrophy += mesh.md.wJq[i] * grad_velocity[j, k][i]^2
     end
@@ -455,17 +471,25 @@ function compute_tgv_quantities(u, t, integrator)
 end
 
 tsave = LinRange(tspan..., 50)
-saved_values = SavedValues(Float64, NTuple{5, Float64})
-saving_callback = SavingCallback(compute_tgv_quantities, saved_values, saveat=tsave)
+saved_values_naive, saved_values_split, saved_values_entropy = ntuple(_ -> SavedValues(Float64, NTuple{5, Float64}), 3)
 
-callbacks = CallbackSet(summary_callback, analysis_callback,
-                        alive_callback, saving_callback)
-
+function create_callback_set(saved_values)
+  return CallbackSet(summary_callback, analysis_callback, alive_callback,
+                     SavingCallback(compute_tgv_quantities, saved_values, saveat=tsave))
+end
 
 ###############################################################################
 # run the simulation
 
-sol = solve(ode, RDPK3SpFSAL49(), abstol = 1.0e-7, reltol = 1.0e-7,
-            dt = 1e-4, save_everystep = false, callback = callbacks)
+# ode = semidiscretize(semi, tspan)
+sol_naive = solve(ODEProblem(rhs_naive!, compute_coefficients(first(tspan), semi), tspan, semi),
+                  RDPK3SpFSAL49(), abstol = 1.0e-7, reltol = 1.0e-7,
+                  dt = 1e-4, save_everystep = false,
+                  callback = create_callback_set(saved_values_split))
+
+sol_split = solve(ODEProblem(rhs_split!, compute_coefficients(first(tspan), semi), tspan, semi),
+                  RDPK3SpFSAL49(), abstol = 1.0e-7, reltol = 1.0e-7,
+                  dt = 1e-4, save_everystep = false,
+                  callback = create_callback_set(saved_values_split))
 
 summary_callback() # print the timer summary
