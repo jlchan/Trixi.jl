@@ -13,11 +13,21 @@ using Trixi: DGMultiFluxDiffPeriodicFDSBP, BoundaryConditionPeriodic
 using Trixi: @trixi_timeit, timer, @threaded
 using Trixi: create_cache, rhs!
 
+# set mach number
+@inline get_mach() = .1
+
 @inline function evaluate_viscous_coefficients(q, equations)
   rho, v1, v2, v3, T = q
   Re = 1600
   Pr = .72
-  mu = 1.0 / Re
+
+  # use non-dimensional Sutherland's law:
+  # mu_ref * (T/T_ref)^(3/2) * (Tref/Tref + S/Tref) / (T/Tref + S/Tref)
+  # Here, S/Tref is computed from the table in https://www.cfd-online.com/Wiki/Sutherland%27s_law
+  S_Tref = 110.4 / 273.15
+  mu_T = T^(1.5) * (1 + S_Tref) / (T + S_Tref)
+
+  mu = mu_T / Re
   lambda = -2/3 * mu
   kappa = equations.gamma / Pr
   return mu, lambda, kappa
@@ -28,7 +38,7 @@ end
 
   @unpack gamma = equations
 
-  Ma = 0.1
+  Ma = get_mach()
   c_v = inv(gamma * (gamma - 1) * Ma^2)
 
   inv_rho = inv(rho)
@@ -378,7 +388,7 @@ equations = CompressibleEulerEquations3D(1.4)
 
 function initial_condition_taylor_green_vortex(x, t, equations::CompressibleEulerEquations3D)
   A  = 1.0 # magnitude of speed
-  Ma = 0.1 # maximum Mach number
+  Ma = get_mach() # maximum Mach number
 
   rho = 1.0
   v1  =  A * sin(x[1]) * cos(x[2]) * cos(x[3])
@@ -402,14 +412,14 @@ function initial_condition_kelvin_helmholtz_instability(x, t, equations::Compres
   return prim2cons(SVector(rho, v1, v2, v3, p), equations)
 end
 
-initial_condition = initial_condition_kelvin_helmholtz_instability
+# initial_condition = initial_condition_kelvin_helmholtz_instability
 initial_condition = initial_condition_taylor_green_vortex
 
 volume_flux  = flux_ranocha
 dg = DGMulti(element_type = Hex(),
              approximation_type = periodic_derivative_operator(
                derivative_order=1, accuracy_order=4, xmin=-pi, xmax=pi, N=32),
-             surface_flux = flux_lax_friedrichs,
+             surface_flux = nothing,
              volume_integral = VolumeIntegralFluxDifferencing(volume_flux))
 
 mesh = DGMultiMesh(dg, coordinates_min=(-pi, -pi, -pi),
