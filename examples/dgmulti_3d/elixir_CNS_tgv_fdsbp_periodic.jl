@@ -502,4 +502,63 @@ sol_split = solve(ODEProblem(rhs_split!, compute_coefficients(first(tspan), semi
                   dt = 1e-4, save_everystep = false,
                   callback = create_callback_set(saved_values_split))
 
-summary_callback() # print the timer summary
+function compute_enstrophy(sol)
+  semi = sol.prob.p
+  @unpack mesh, cache = semi
+  @unpack velocity, grad_velocity = cache
+  D = dg.basis.approximationType # FDSBP operator
+
+  u = sol.u[end]
+
+  # compute |D_i * u_j|
+  @threaded for i in eachindex(u)
+    rho, rho_v1, rho_v2, rho_v3, rho_e = u[i]
+    velocity[1][i] = rho_v1 / rho
+    velocity[2][i] = rho_v2 / rho
+    velocity[3][i] = rho_v3 / rho
+  end
+  fill!.(grad_velocity, zero(eltype(u[1])))
+  for i in 1:3, j in 1:3
+    mul!(grad_velocity[i, j], D, i, velocity[j])
+  end
+
+  pointwise_enstrophy = zeros(size(velocity[1]))
+  for i in 1:3, j in 1:3
+    @. pointwise_enstrophy += grad_velocity[i, j]^2
+  end
+
+  return pointwise_enstrophy
+end
+
+enstrophy_naive = compute_enstrophy(sol_naive)
+enstrophy_split = compute_enstrophy(sol_split)
+
+@show sum(mesh.md.wJq .* vec(enstrophy_naive - enstrophy_split))
+
+scatter(mesh.md.xyz..., zcolor=enstrophy_naive - enstrophy_split, leg=false, msw=0, colorbar=true)
+
+# function downsample(u, semi)
+#   @unpack mesh, equations, solver, cache = semi
+#   N = nnodes(solver.basis.approximation_type)
+#   u = reshape(u, N, N, N)
+#   return u[1:2:end, 1:2:end, 1:2:end]
+# end
+# # 2x resolution for fine grid
+# dg_fine = DGMulti(element_type = Hex(),
+#                   approximation_type = periodic_derivative_operator(
+#                     derivative_order=1, accuracy_order=4, xmin=-pi, xmax=pi,
+#                     N=64),
+#                   surface_flux = nothing,
+#                   volume_integral = VolumeIntegralFluxDifferencing(volume_flux))
+# mesh_fine = DGMultiMesh(dg_fine, coordinates_min=(-pi, -pi, -pi),
+#                         coordinates_max=( pi,  pi,  pi))
+# semi_fine = SemidiscretizationHyperbolic(mesh_fine, equations, initial_condition, dg_fine)
+# sol_fine = solve(ODEProblem(rhs_split!, compute_coefficients(first(tspan), semi_fine), tspan, semi_fine),
+#                   RDPK3SpFSAL49(), abstol = 1.0e-7, reltol = 1.0e-7,
+#                   dt = 1e-4, save_everystep = false,
+#                   callback = CallbackSet(summary_callback, alive_callback))
+# enstrophy_fine = downsample(compute_enstrophy(sol_fine), sol_fine.prob.p)
+# xyz = map(x->downsample(x, sol_fine.prob.p), mesh_fine.md.xyz)
+
+# @show maximum(abs.(enstrophy_fine - enstrophy_naive))
+# @show maximum(abs.(enstrophy_fine - enstrophy_split))
