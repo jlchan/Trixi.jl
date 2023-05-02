@@ -263,9 +263,7 @@ function calc_volume_integral!(du, u, mesh::DGMultiMesh,
                                cache)
 
   rd = dg.basis
-  md = mesh.md
-  @unpack weak_differentiation_matrices, dxidxhatj, u_values, local_values_threaded = cache
-  @unpack rstxyzJ = md # geometric terms
+  (; weak_differentiation_matrices, dxidxhatj, u_values, local_values_threaded) = cache
 
   # interpolate to quadrature points
   apply_to_each_field(mul_by!(rd.Vq), u_values, u)
