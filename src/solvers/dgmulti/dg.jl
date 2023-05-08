@@ -447,6 +447,14 @@ end
 calc_boundary_flux!(cache, t, boundary_conditions::NamedTuple{(),Tuple{}},
                     have_nonconservative_terms, mesh, equations, dg::DGMulti) = nothing
 
+# This function was originally defined as
+# `reshape_by_face(u) = reshape(view(u, :), num_pts_per_face, num_faces_total)`.
+# This results in allocations due to https://github.com/JuliaLang/julia/issues/36313.
+# To avoid allocations, we use Tim Holy's suggestion:
+# https://github.com/JuliaLang/julia/issues/36313#issuecomment-782336300.
+reshape_by_face(u, num_pts_per_face, num_faces_total) =
+  Base.ReshapedArray(u, (num_pts_per_face, num_faces_total), ())
+
 function calc_single_boundary_flux!(cache, t, boundary_condition, boundary_key,
                                     have_nonconservative_terms::False,
                                     mesh, equations, dg::DGMulti{NDIMS}) where {NDIMS}
@@ -463,17 +471,10 @@ function calc_single_boundary_flux!(cache, t, boundary_condition, boundary_key,
   num_pts_per_face = rd.Nfq ÷ num_faces
   num_faces_total = num_faces * md.num_elements
 
-  # This function was originally defined as
-  # `reshape_by_face(u) = reshape(view(u, :), num_pts_per_face, num_faces_total)`.
-  # This results in allocations due to https://github.com/JuliaLang/julia/issues/36313.
-  # To avoid allocations, we use Tim Holy's suggestion:
-  # https://github.com/JuliaLang/julia/issues/36313#issuecomment-782336300.
-  reshape_by_face(u) = Base.ReshapedArray(u, (num_pts_per_face, num_faces_total), ())
-
-  u_face_values = reshape_by_face(u_face_values)
-  flux_face_values = reshape_by_face(flux_face_values)
-  Jf = reshape_by_face(Jf)
-  nxyzJ, xyzf = reshape_by_face.(nxyzJ), reshape_by_face.(xyzf) # broadcast over nxyzJ::NTuple{NDIMS,Matrix}
+  u_face_values = reshape_by_face(u_face_values, num_pts_per_face, num_faces_total)
+  flux_face_values = reshape_by_face(flux_face_values, num_pts_per_face, num_faces_total)
+  Jf = reshape_by_face(Jf, num_pts_per_face, num_faces_total)
+  nxyzJ, xyzf = reshape_by_face.(nxyzJ, num_pts_per_face, num_faces_total), reshape_by_face.(xyzf, num_pts_per_face, num_faces_total) # broadcast over nxyzJ::NTuple{NDIMS,Matrix}
 
   # loop through boundary faces, which correspond to columns of reshaped u_face_values, ...
   for f in mesh.boundary_faces[boundary_key]
@@ -490,6 +491,42 @@ function calc_single_boundary_flux!(cache, t, boundary_condition, boundary_key,
   # However, we don't have to re-reshape, since cache.flux_face_values still retains its original shape.
 end
 
+function get_face_normal(md::MeshData{1}, num_pts_per_face, num_faces_total, i, f)
+  nx = reshape_by_face(md.nx, num_pts_per_face, num_faces_total)
+  return SVector(nx[i, f])
+end
+
+function get_face_normal(md::MeshData{2}, num_pts_per_face, num_faces_total, i, f)
+  nx = reshape_by_face(md.nx, num_pts_per_face, num_faces_total)
+  ny = reshape_by_face(md.ny, num_pts_per_face, num_faces_total)
+  return SVector(nx[i, f], ny[i, f])
+end
+
+function get_face_normal(md::MeshData{3}, num_pts_per_face, num_faces_total, i, f)
+  nx = reshape_by_face(md.nx, num_pts_per_face, num_faces_total)
+  ny = reshape_by_face(md.ny, num_pts_per_face, num_faces_total)
+  nz = reshape_by_face(md.nz, num_pts_per_face, num_faces_total)
+  return SVector(nx[i, f], ny[i, f], nz[i, f])
+end
+
+function get_face_coordinates(md::MeshData{1}, num_pts_per_face, num_faces_total, i, f)
+  xf = reshape_by_face(md.xf, num_pts_per_face, num_faces_total)
+  return SVector(xf[i, f])
+end
+
+function get_face_coordinates(md::MeshData{2}, num_pts_per_face, num_faces_total, i, f)
+  xf = reshape_by_face(md.xf, num_pts_per_face, num_faces_total)
+  yf = reshape_by_face(md.yf, num_pts_per_face, num_faces_total)
+  return SVector(xf[i, f], yf[i, f])
+end
+
+function get_face_coordinates(md::MeshData{3}, num_pts_per_face, num_faces_total, i, f)
+  xf = reshape_by_face(md.xf, num_pts_per_face, num_faces_total)
+  yf = reshape_by_face(md.yf, num_pts_per_face, num_faces_total)
+  zf = reshape_by_face(md.zf, num_pts_per_face, num_faces_total)
+  return SVector(xf[i, f], yf[i, f], zf[i, f])
+end
+
 function calc_single_boundary_flux!(cache, t, boundary_condition, boundary_key,
                                     have_nonconservative_terms::True,
                                     mesh, equations, dg::DGMulti{NDIMS}) where {NDIMS}
@@ -503,23 +540,16 @@ function calc_single_boundary_flux!(cache, t, boundary_condition, boundary_key,
   num_pts_per_face = rd.Nfq ÷ StartUpDG.num_faces(rd.element_type)
   num_faces_total = StartUpDG.num_faces(rd.element_type) * md.num_elements
 
-  # This function was originally defined as
-  # `reshape_by_face(u) = reshape(view(u, :), num_pts_per_face, num_faces_total)`.
-  # This results in allocations due to https://github.com/JuliaLang/julia/issues/36313.
-  # To avoid allocations, we use Tim Holy's suggestion:
-  # https://github.com/JuliaLang/julia/issues/36313#issuecomment-782336300.
-  reshape_by_face(u) = Base.ReshapedArray(u, (num_pts_per_face, num_faces_total), ())
-
-  u_face_values = reshape_by_face(cache.u_face_values)
-  flux_face_values = reshape_by_face(cache.flux_face_values)
-  Jf = reshape_by_face(md.Jf)
-  nxyzJ, xyzf = reshape_by_face.(md.nxyzJ), reshape_by_face.(md.xyzf) # broadcast over nxyzJ::NTuple{NDIMS,Matrix}
+  u_face_values = reshape_by_face(cache.u_face_values, num_pts_per_face, num_faces_total)
+  flux_face_values = reshape_by_face(cache.flux_face_values, num_pts_per_face, num_faces_total)
+  Jf = reshape_by_face(md.Jf, num_pts_per_face, num_faces_total)
 
   # loop through boundary faces, which correspond to columns of reshaped u_face_values, ...
   for f in mesh.boundary_faces[boundary_key]
     for i in Base.OneTo(num_pts_per_face)
-      face_normal = SVector{NDIMS}(getindex.(nxyzJ, i, f)) / Jf[i,f]
-      face_coordinates = SVector{NDIMS}(getindex.(xyzf, i, f))
+
+      face_normal = get_face_normal(md, num_pts_per_face, num_faces_total, i, f)
+      face_coordinates = get_face_coordinates(md, num_pts_per_face, num_faces_total, i, f)
 
       # compute conservative and non-conservative parts separately
       cons_flux_at_face_node = boundary_condition(u_face_values[i,f], face_normal, face_coordinates, t,
