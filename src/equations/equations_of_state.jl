@@ -9,7 +9,7 @@
     AbstractEquationOfState
 
 The interface for an `AbstractEquationOfState` requires specifying
-the following four functions: 
+the following four functions:
 - `pressure(V, T, eos)`
 - `energy_internal(V, T, eos)`, the specific internal energy
 - `entropy_specific(V, T, eos)`, the specific entropy
@@ -18,9 +18,9 @@ the following four functions:
 where `eos = equations.equation_of_state`.
 `entropy_specific` is required to calculate the mathematical entropy and entropy variables,
 and `speed_of_sound` is required to calculate wavespeed estimates for e.g., [`FluxLaxFriedrichs`](@ref).
-    
-Additional functions can also be specialized to particular equations of state to improve 
-efficiency. 
+
+Additional functions can also be specialized to particular equations of state to improve
+efficiency.
 """
 abstract type AbstractEquationOfState end
 
@@ -30,7 +30,7 @@ include("equation_of_state_vdw.jl")
 #######################################################
 #
 # Some general fallback routines are provided below
-# 
+#
 #######################################################
 
 function gibbs_free_energy(V, T, eos)
@@ -61,7 +61,7 @@ eos_newton_tol(eos::AbstractEquationOfState) = 10 * eps()
 
 Calculates the temperature as a function of specific volume `V` and internal energy `e`
 by using Newton's method to determine `T` such that `energy_internal(V, T, eos) = e`.
-Note that the tolerance may need to be adjusted based on the specific equation of state. 
+Note that the tolerance may need to be adjusted based on the specific equation of state.
 """
 function temperature(V, e, eos::AbstractEquationOfState; initial_T = 1.0,
                      tol = eos_newton_tol(eos), maxiter = 100)
@@ -71,7 +71,7 @@ function temperature(V, e, eos::AbstractEquationOfState; initial_T = 1.0,
     while abs(de) > tol * abs(e) && iter < maxiter
         de = energy_internal(V, T, eos) - e
 
-        # for thermodynamically admissible states, c_v = de_dT_V > 0, which should 
+        # for thermodynamically admissible states, c_v = de_dT_V > 0, which should
         # guarantee convergence of this iteration.
         de_dT_V = heat_capacity_constant_volume(V, T, eos)
 
@@ -91,11 +91,21 @@ end
     e = energy_internal(V, T, eos)
 
     dpdT_V, dpdV_T = calc_pressure_derivatives(V, T, eos)
-    dpdrho_T = dpdV_T * (-V / rho) # V = inv(rho), so dVdrho = -1/rho^2 = -V^2. 
+    dpdrho_T = dpdV_T * (-V / rho) # V = inv(rho), so dVdrho = -1/rho^2 = -V^2.
     de_dV_T = T * dpdT_V - pressure(V, T, eos)
     drho_e_drho_T = e + rho * de_dV_T * (-V / rho) # d(rho_e)/drho_|T = e + rho * de_dV|T * dVdrho
 
     c_v = heat_capacity_constant_volume(V, T, eos)
     return ((-rho * c_v) / (dpdT_V) * dpdrho_T + drho_e_drho_T)
 end
+
+@inline function drho_e_dp_at_const_rho(V, T, eos::AbstractEquationOfState)
+    rho = inv(V)
+    dpdT_V, _dpdV_T = calc_pressure_derivatives(V, T, eos)
+    c_v = heat_capacity_constant_volume(V, T, eos)
+
+    # (∂(ρe)/∂p)|ρ = ρ c_v / (∂p/∂T)|V
+    return (rho * c_v) / dpdT_V
+end
+
 end # @muladd
