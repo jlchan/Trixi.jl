@@ -58,6 +58,8 @@ end
 # for the Newton solver for temperature. 
 eos_newton_tol(eos::AbstractEquationOfState) = 10 * eps()
 eos_initial_temperature(V, e_internal, eos::AbstractEquationOfState) = 1
+eos_initial_specific_volume(gibbs, T, eos::AbstractEquationOfState) = 1
+eos_min_specific_volume(eos) = 0.0
 eos_newton_maxiter(eos) = 20
 
 """
@@ -88,6 +90,33 @@ function temperature(V, e_internal, eos::AbstractEquationOfState;
     if iter == maxiter
         @warn "Solver in `temperature(V, T, eos)` did not converge within $maxiter iterations. " *
               "Final states: iter = $iter, V, e_internal = $V, $(e_internal) with de = $de"
+    end
+    return T
+end
+
+# determines specific volume from Gibbs free energy and temperature
+function specific_volume(gibbs, T, eos::AbstractEquationOfState;
+                         initial_V = eos_initial_specific_volume(gibbs, T, eos),
+                         tol = eos_newton_tol(eos), maxiter = eos_newton_maxiter(eos))
+    V = initial_V
+    dgibbs = gibbs_free_energy(V, T, eos) - gibbs
+    iter = 1
+    while abs(dgibbs) > tol * abs(gibbs) && iter < maxiter
+
+        # for thermodynamically admissible states, dgdV_T = V * dpdV at constant T
+        _, dpdV_T = calc_pressure_derivatives(model, V, T)
+        dgdV_T = V * dpdV_T
+
+        # guard against negative temperatures
+        V = max(eos_min_specific_volume(eos) + tol, V - dgibbs / dgdV_T)
+
+        dgibbs = gibbs_free_energy(V, T, eos) - gibbs
+
+        iter += 1
+    end
+    if iter == maxiter
+        @warn "Solver in `specific_volume(gibbs, T, eos)` did not converge within $maxiter iterations. " *
+              "Final states: iter = $iter, V, T = $V, $T with dgibbs = $dgibbs"
     end
     return T
 end

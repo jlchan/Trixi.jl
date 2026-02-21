@@ -57,6 +57,10 @@ function pressure(V, T, eos::VanDerWaals)
     return p
 end
 
+# The pressure is p = RT / (V - b) + ..., so V
+# must be larger than the co-volume parameter `b`
+eos_min_specific_volume(eos::VanDerWaals) = eos.b
+
 """
     energy_internal_specific(V, T, eos::VanDerWaals)
 

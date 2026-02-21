@@ -103,6 +103,10 @@ function pressure(V, T, eos::PengRobinson)
     return p
 end
 
+# The pressure is p = RT / (V - b) + ..., so V
+# must be larger than the co-volume parameter `b`
+eos_min_specific_volume(eos::PengRobinson) = eos.b
+
 @doc raw"""
     energy_internal_specific(V, T, eos::PengRobinson)
 
