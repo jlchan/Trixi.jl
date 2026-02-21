@@ -294,6 +294,23 @@ end
     return inv(T) * SVector(gibbs - 0.5f0 * v1^2, v1, -1)
 end
 
+# Convert conservative variables to entropy
+@inline function entropy2cons(w, equations::NonIdealCompressibleEulerEquations1D)
+    eos = equations.equation_of_state
+
+    T = -w[3]
+    v1 = w[2] * T
+
+    # gibbs free energy = e_internal + p * V - T * s
+    gibbs = w[1] * T + 0.5f0 * v1^2
+
+    V = specific_volume(gibbs, T, eos)
+
+    e_internal = energy_internal_specific(V, T, eos)
+    rho_e_total = rho * e_internal + 0.5f0 * rho_v1 * v1
+    return SVector(rho, rho_v1, rho_e_total)
+end
+
 # Convert thermodynamic variables `V, v1, T` to conservative variables
 @inline function thermo2cons(thermo, equations::NonIdealCompressibleEulerEquations1D)
     eos = equations.equation_of_state
