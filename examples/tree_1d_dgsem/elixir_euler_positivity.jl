@@ -45,7 +45,7 @@ initial_condition = initial_condition_sedov_blast_wave
 # `StepsizeCallback` (CFL-Condition) and less diffusion.
 surface_flux = FluxLaxFriedrichs(max_abs_speed_naive)
 volume_flux = flux_ranocha
-basis = LobattoLegendreBasis(3)
+basis = LobattoLegendreBasis(7)
 indicator_sc = IndicatorHennemannGassner(equations, basis,
                                          alpha_max = 0.5,
                                          alpha_min = 0.001,
@@ -59,7 +59,7 @@ solver = DGSEM(basis, surface_flux, volume_integral)
 coordinates_min = (-2.0,)
 coordinates_max = (2.0,)
 mesh = TreeMesh(coordinates_min, coordinates_max,
-                initial_refinement_level = 6,
+                initial_refinement_level = 5,
                 n_cells_max = 10_000, periodicity = true)
 
 semi = SemidiscretizationHyperbolic(mesh, equations, initial_condition, solver;
@@ -94,15 +94,18 @@ amr_callback = AMRCallback(semi, amr_controller,
                            adapt_initial_condition = true,
                            adapt_initial_condition_only_refine = true)
 
-stepsize_callback = StepsizeCallback(cfl = 0.5)
+stepsize_callback = StepsizeCallback(cfl = 0.15)
 
 callbacks = CallbackSet(summary_callback,
                         analysis_callback, alive_callback,
                         save_solution,
-                        amr_callback, stepsize_callback)
+                        # amr_callback, 
+                        stepsize_callback)
 
 stage_limiter! = PositivityPreservingLimiterZhangShu(thresholds = (5.0e-6, 5.0e-6),
                                                      variables = (Trixi.density, pressure))
+# stage_limiter! = PositivityPreservingAdaptiveFilterDzanicWitherden(thresholds = (5.0e-6, 5.0e-6),
+#                                                                    variables = (Trixi.density, pressure))
 
 ###############################################################################
 # run the simulation
@@ -110,3 +113,6 @@ stage_limiter! = PositivityPreservingLimiterZhangShu(thresholds = (5.0e-6, 5.0e-
 sol = solve(ode, CarpenterKennedy2N54(; stage_limiter!, williamson_condition = false);
             dt = 1, # solve needs some value here but it will be overwritten by the stepsize_callback
             ode_default_options()..., callback = callbacks);
+
+using Plots
+plot(sol)            

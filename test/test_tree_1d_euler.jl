@@ -393,6 +393,47 @@ end
     @test_allocations(Trixi.rhs!, semi, sol, 1000)
 end
 
+@trixi_testset "elixir_euler_positivity.jl (adaptive filter)" begin
+    @test_trixi_include(joinpath(EXAMPLES_DIR, "elixir_euler_positivity.jl"),
+                        stage_limiter!=PositivityPreservingAdaptiveFilterDzanicWitherden(thresholds = (5.0e-6,
+                                                                                                       5.0e-6),
+                                                                                         variables = (Trixi.density,
+                                                                                                      pressure)),
+                        l2=[1.658302066779776, 0.19859346905232203, 0.9781555520619799],
+                        linf=[4.73169385989844, 0.5349292903850207, 2.7411597772674305])
+    # Ensure that we do not have excessive memory allocations
+    # (e.g., from type instabilities)
+    @test_allocations(Trixi.rhs!, semi, sol, 1000)
+end
+
+@testset "PositivityPreservingAdaptiveFilterDzanicWitherden mean failure" begin
+    equations = CompressibleEulerEquations1D(1.4)
+    basis = LobattoLegendreBasis(3)
+    solver = DGSEM(basis, flux_lax_friedrichs, flux_ranocha)
+    mesh = TreeMesh((0.0,), (1.0,), initial_refinement_level = 0,
+                    n_cells_max = 10, periodicity = true)
+
+    function initial_condition_negative_pressure(x, t, equations)
+        return prim2cons(SVector(1.0, 0.0, -1.0), equations)
+    end
+
+    semi = SemidiscretizationHyperbolic(mesh, equations,
+                                        initial_condition_negative_pressure, solver;
+                                        boundary_conditions = boundary_condition_periodic)
+    ode = semidiscretize(semi, (0.0, 1.0))
+    u = Trixi.wrap_array(ode.u0, semi)
+    mesh_, equations_, solver_, cache = Trixi.mesh_equations_solver_cache(semi)
+    thresholds = (5.0e-6, 5.0e-6)
+    variables = (Trixi.density, Trixi.pressure)
+
+    @test_throws ErrorException Trixi.adaptive_filter_dzanic_witherden!(u, thresholds,
+                                                                        variables,
+                                                                        1.0e-8, 20,
+                                                                        mesh_,
+                                                                        equations_,
+                                                                        solver_, cache)
+end
+
 @trixi_testset "elixir_euler_blast_wave.jl" begin
     @test_trixi_include(joinpath(EXAMPLES_DIR, "elixir_euler_blast_wave.jl"),
                         l2=[0.21934822867340323, 0.28131919126002686, 0.554361702716662],

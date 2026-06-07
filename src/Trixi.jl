@@ -370,6 +370,7 @@ export ControllerThreeLevel, ControllerThreeLevelCombined,
        IndicatorLöhner, IndicatorLoehner, IndicatorMax, IndicatorNodalFunction
 
 export PositivityPreservingLimiterZhangShu, PositivityPreservingLimiterLiuZhang,
+       PositivityPreservingAdaptiveFilterDzanicWitherden,
        EntropyBoundedLimiter
 
 export trixi_include, examples_dir, get_examples, default_example,
