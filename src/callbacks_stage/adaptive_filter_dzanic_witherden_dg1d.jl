@@ -13,22 +13,31 @@ end
                                      variables::NTuple{N, Any},
                                      equations) where {N}
     threshold = first(thresholds)
-    remaining_thresholds = Base.tail(thresholds)
     variable = first(variables)
+    remaining_thresholds = Base.tail(thresholds)
     remaining_variables = Base.tail(variables)
 
     residual = constraint_residual(u_node, threshold, variable, equations)
     remaining_residual = constraint_residual(u_node, remaining_thresholds,
                                              remaining_variables, equations)
+    
+    # if any constraint_residual is negative, then taking the minimum will detect the violation.
     return min(residual, remaining_residual)
 end
 
+# terminate recursion
 @inline function constraint_residual(u_node, thresholds::Tuple{}, variables::Tuple{},
                                      equations)
     return typemax(eltype(u_node))
 end
 
-@inline function filtered_node_vars_at_index(modal_contributions, f, node_index, n_nodes,
+@inline function satisfies_constraints(u_node, thresholds, variables, equations)
+    return constraint_residual(u_node, thresholds, variables, equations) >=
+           zero(eltype(u_node))
+end
+
+@inline function filtered_node_vars_at_index(modal_contributions, f, node_index,
+                                             n_nodes,
                                              ::Val{N_VARS}) where {
                                                                    N_VARS}
     RealT = eltype(modal_contributions)
@@ -43,7 +52,8 @@ end
                    end)
 end
 
-@inline function solve_for_filter_strength_illinois(g, f_inadmissible, tolerance, max_iterations)
+@inline function solve_for_filter_strength_illinois(g, f_inadmissible, tolerance,
+                                                    max_iterations)
     RealT = typeof(f_inadmissible)
     f_admissible = zero(RealT)
     g_valid = g(f_admissible)
@@ -62,10 +72,13 @@ end
         end
 
         f_candidate = f_inadmissible -
-                      g_invalid * (f_inadmissible - f_admissible) / (g_invalid - g_valid)
+                      g_invalid * (f_inadmissible - f_admissible) /
+                      (g_invalid - g_valid)
         g_candidate = g(f_candidate)
 
         if abs(g_candidate) <= tolerance
+            # if the residual is non-negative, then the filtered 
+            # solution satisfies the constraints.
             if g_candidate >= zero(RealT)
                 f_admissible = f_candidate
             end
@@ -97,7 +110,7 @@ function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
                                            tolerance::Real, max_iterations::Int,
                                            mesh::AbstractMesh{1}, equations,
                                            dg::DGSEM, cache) where {N}
-    @unpack inverse_vandermonde_legendre = dg.basis
+    (; inverse_vandermonde_legendre) = dg.basis
     vandermonde = inv(inverse_vandermonde_legendre)
 
     n_nodes = nnodes(dg)
@@ -107,8 +120,7 @@ function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
         violates_positivity = false
         for i in eachnode(dg)
             u_node = get_node_vars(u, equations, dg, i, element)
-            if constraint_residual(u_node, thresholds, variables, equations) <
-               zero(eltype(u))
+            if !satisfies_constraints(u_node, thresholds, variables, equations)
                 violates_positivity = true
                 break
             end
@@ -116,9 +128,8 @@ function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
         violates_positivity || continue
 
         u_mean = compute_u_mean(u, element, mesh, equations, dg, cache)
-        if constraint_residual(u_mean, thresholds, variables, equations) <
-           zero(eltype(u))
-            error("element mean violates positivity constraints; " *
+        if !satisfies_constraints(u_mean, thresholds, variables, equations)
+            error("element mean = $(u_mean) violates positivity constraints; " *
                   "adaptive filter cannot recover a constraint-satisfying state")
         end
 
@@ -138,18 +149,19 @@ function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
             end
         end
 
+        # the filter is applied via ∑ f^(2k) û_k, where û_k are the modal coefficients
+        # we initialize f = 1 and solve for a value of f that satisfies the constraints.
         f_upper = one(eltype(u))
 
         for i in eachnode(dg)
-            u_filtered = filtered_node_vars_at_index(modal_contributions, f_upper, i, n_nodes,
-                                                     n_vars)
-            if constraint_residual(u_filtered, thresholds, variables,
-                                   equations) >= zero(eltype(u))
+            u_filtered = filtered_node_vars_at_index(modal_contributions, f_upper, i,
+                                                     n_nodes, n_vars)
+            satisfies_constraints(u_filtered, thresholds, variables, equations) &&
                 continue
-            end
 
             function g(f)
-                u_node = filtered_node_vars_at_index(modal_contributions, f, i, n_nodes, n_vars)
+                u_node = filtered_node_vars_at_index(modal_contributions, f, i, n_nodes,
+                                                     n_vars)
                 return constraint_residual(u_node, thresholds, variables, equations)
             end
 
@@ -158,8 +170,8 @@ function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
         end
 
         for i in eachnode(dg)
-            u_filtered = filtered_node_vars_at_index(modal_contributions, f_upper, i, n_nodes,
-                                                     n_vars)
+            u_filtered = filtered_node_vars_at_index(modal_contributions, f_upper, i,
+                                                     n_nodes, n_vars)
             set_node_vars!(u, u_filtered, equations, dg, i, element)
         end
     end
