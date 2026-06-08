@@ -6,7 +6,7 @@
 #! format: noindent
 
 """
-    PositivityPreservingAdaptiveFilterDzanicWitherden(; thresholds, variables,
+    PositivityPreservingFilterDzanicWitherden(; thresholds, variables,
                                                         tolerance = 1.0e-8,
                                                         max_iterations = 20)
 
@@ -24,32 +24,29 @@ at all nodes. If the element mean violates a threshold, an error is thrown.
 The parameters `tolerance` and `max_iterations` control the Illinois modified
 regula falsi root solver used to determine the filter strength.
 """
-struct PositivityPreservingAdaptiveFilterDzanicWitherden{N,
-                                                         Thresholds <:
-                                                         NTuple{N, <:Real},
-                                                         Variables <: NTuple{N, Any},
-                                                         RealT <: Real}
+struct PositivityPreservingFilterDzanicWitherden{N,
+                                                 Thresholds <:
+                                                 NTuple{N, <:Real},
+                                                 Variables <: NTuple{N, Any},
+                                                 RealT <: Real}
     thresholds::Thresholds
     variables::Variables
     tolerance::RealT
     max_iterations::Int
 end
 
-function PositivityPreservingAdaptiveFilterDzanicWitherden(;
-                                                           thresholds, variables,
-                                                           tolerance::RealT = 1.0e-8,
-                                                           max_iterations = 20) where {
-                                                                                       RealT <:
-                                                                                       Real}
-    return PositivityPreservingAdaptiveFilterDzanicWitherden(thresholds, variables,
-                                                             tolerance,
-                                                             max_iterations)
+function PositivityPreservingFilterDzanicWitherden(; thresholds, variables,
+                                                     tolerance = 1.0e-8,
+                                                     max_iterations = 100)
+    return PositivityPreservingFilterDzanicWitherden(thresholds, variables,
+                                                     tolerance,
+                                                     max_iterations)
 end
 
-function (limiter!::PositivityPreservingAdaptiveFilterDzanicWitherden)(u_ode,
-                                                                       integrator,
-                                                                       semi::AbstractSemidiscretization,
-                                                                       t)
+function (limiter!::PositivityPreservingFilterDzanicWitherden)(u_ode,
+                                                               integrator,
+                                                               semi::AbstractSemidiscretization,
+                                                               t)
     u = wrap_array(u_ode, semi)
     @trixi_timeit timer() "positivity-preserving adaptive filter" begin
         adaptive_filter_dzanic_witherden!(u, limiter!.thresholds, limiter!.variables,
