@@ -104,8 +104,6 @@ callbacks = CallbackSet(summary_callback,
 
 stage_limiter! = PositivityPreservingLimiterZhangShu(thresholds = (5.0e-6, 5.0e-6),
                                                      variables = (Trixi.density, pressure))
-# stage_limiter! = PositivityPreservingAdaptiveFilterDzanicWitherden(thresholds = (5.0e-6, 5.0e-6),
-#                                                                    variables = (Trixi.density, pressure))
 
 ###############################################################################
 # run the simulation
