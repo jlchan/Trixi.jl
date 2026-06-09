@@ -31,42 +31,66 @@ end
     return typemax(eltype(u_node))
 end
 
-@inline function satisfies_constraints(u_node, thresholds, variables, equations)
-    return constraint_residual(u_node, thresholds, variables, equations) >=
-           zero(eltype(u_node))
+@inline function satisfies_constraints(u_node, thresholds, variables, equations;
+                                       tolerance = zero(eltype(u_node)))
+    return constraint_residual(u_node, thresholds, variables, equations) >= -tolerance
 end
 
-@inline function filtered_node_vars_at_index(modal_contributions, f, node_index,
-                                             n_nodes,
-                                             ::Val{N_VARS}) where {
-                                                                   N_VARS}
+@inline function filter_constraint_residual(modal_contributions, f, node_index, n_nodes,
+                                            n_vars, thresholds, variables, equations)
+    u_node = filtered_solution_at_node(modal_contributions, f, node_index, equations)
+    return constraint_residual(u_node, thresholds, variables, equations)
+end
+
+@inline function filtered_solution_at_node(modal_contributions, f, node_index, 
+                                           equations::AbstractEquations{NDIMS, NVARS}) where {NDIMS, NVARS}
     RealT = eltype(modal_contributions)
-    return SVector(ntuple(Val(N_VARS)) do variable_index
+    return SVector(ntuple(Val(NVARS)) do variable_index
                        res = zero(RealT)
-                       for k in 1:n_nodes
+                       for k in axes(modal_contributions, 2)
                            degree_sq = (k - 1)^2
                            res += f^degree_sq *
                                   modal_contributions[variable_index, k, node_index]
+
+                        #    # this is equivalent to Zhang-Shu limiting
+                        #    if k == 1
+                        #       # first mode is not filtered
+                        #       res += modal_contributions[variable_index, k, node_index]
+                        #    else
+                        #       res += f * modal_contributions[variable_index, k, node_index]
+                        #    end
                        end
                        res
                    end)
 end
 
-@inline function solve_for_filter_strength_illinois(g, f_inadmissible, tolerance,
-                                                    max_iterations)
+@inline function solve_for_filter_strength_illinois(modal_contributions, node_index,
+                                                    n_nodes, n_vars, thresholds,
+                                                    variables, equations, 
+                                                    f_inadmissible,
+                                                    tolerance, 
+                                                    max_iterations_rootfinding)
+
+    return 0.0
+                                                        
     RealT = typeof(f_inadmissible)
     f_admissible = zero(RealT)
-    g_valid = g(f_admissible)
-    g_invalid = g(f_inadmissible)
+    g_valid = filter_constraint_residual(modal_contributions, f_admissible, node_index,
+                                         n_nodes, n_vars, thresholds, variables,
+                                         equations)
+    g_invalid = filter_constraint_residual(modal_contributions, f_inadmissible,
+                                           node_index,
+                                           n_nodes, n_vars, thresholds, variables,
+                                           equations)
 
-    if g_valid < zero(RealT)
-        error("element mean = $(g_valid) violates positivity constraints; " *
-              "adaptive filter cannot recover a constraint-satisfying state")
-    end
+    # if g_valid < zero(RealT)
+    #     error("element mean violates positivity constraints; " *
+    #           "adaptive filter cannot recover a constraint-satisfying state")
+    # end
 
     side = 0
 
-    for _ in 1:max_iterations
+    for _ in 1:max_iterations_rootfinding
         if abs(f_inadmissible - f_admissible) <= tolerance
             break
         end
@@ -74,7 +98,9 @@ end
         f_candidate = f_inadmissible -
                       g_invalid * (f_inadmissible - f_admissible) /
                       (g_invalid - g_valid)
-        g_candidate = g(f_candidate)
+        g_candidate = filter_constraint_residual(modal_contributions, f_candidate,
+                                                 node_index, n_nodes, n_vars,
+                                                 thresholds, variables, equations)
 
         if abs(g_candidate) <= tolerance
             # if the residual is non-negative, then the filtered 
@@ -105,11 +131,10 @@ end
     return f_admissible
 end
 
-function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
-                                           variables::NTuple{N, Any},
-                                           tolerance::Real, max_iterations::Int,
+function adaptive_filter_dzanic_witherden!(u, thresholds, variables,
+                                           tolerance, max_iterations_rootfinding,
                                            mesh::AbstractMesh{1}, equations,
-                                           dg::DGSEM, cache) where {N}
+                                           dg::DGSEM, cache) 
     (; inverse_vandermonde_legendre) = dg.basis
     vandermonde = inv(inverse_vandermonde_legendre)
 
@@ -129,10 +154,13 @@ function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
 
         u_mean = compute_u_mean(u, element, mesh, equations, dg, cache)
         if !satisfies_constraints(u_mean, thresholds, variables, equations)
-            error("element mean = $(u_mean) violates positivity constraints; " *
-                  "adaptive filter cannot recover a constraint-satisfying state")
+            @warn "cell average = $(u_mean) violates positivity constraints; " *
+                  "adaptive filter cannot recover a constraint-satisfying state"
         end
 
+        # precompute modal_contributions[:,i] = vandermonde[:,i] * (vandermonde \ u)
+        # --> modal_contributions * [f^(2k) for k in 0:n_nodes-1] returns the filtered
+        # solution at the nodes
         modal_contributions = zeros(eltype(u), nvariables(equations), n_nodes, n_nodes)
         modal = zeros(eltype(u), n_nodes)
         u_nodal = zeros(eltype(u), n_nodes)
@@ -142,9 +170,9 @@ function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
                 u_nodal[i] = u[v, i, element]
             end
             multiply_scalar_dimensionwise!(modal, inverse_vandermonde_legendre, u_nodal)
-            for k in 1:n_nodes
+            for ii in 1:n_nodes
                 for i in eachnode(dg)
-                    modal_contributions[v, k, i] = vandermonde[i, k] * modal[k]
+                    modal_contributions[v, ii, i] = vandermonde[i, ii] * modal[ii]
                 end
             end
         end
@@ -152,26 +180,26 @@ function adaptive_filter_dzanic_witherden!(u, thresholds::NTuple{N, <:Real},
         # the filter is applied via ∑ f^(2k) û_k, where û_k are the modal coefficients
         # we initialize f = 1 and solve for a value of f that satisfies the constraints.
         f_upper = one(eltype(u))
-
         for i in eachnode(dg)
-            u_filtered = filtered_node_vars_at_index(modal_contributions, f_upper, i,
-                                                     n_nodes, n_vars)
+            
+            u_filtered = filtered_solution_at_node(modal_contributions, f_upper, i,
+                                                     equations)
             satisfies_constraints(u_filtered, thresholds, variables, equations) &&
                 continue
 
-            function g(f)
-                u_node = filtered_node_vars_at_index(modal_contributions, f, i, n_nodes,
-                                                     n_vars)
-                return constraint_residual(u_node, thresholds, variables, equations)
-            end
-
-            f_upper = solve_for_filter_strength_illinois(g, f_upper, tolerance,
-                                                         max_iterations)
+            # solve for filter strength f that satisfies the constraints
+            # note that f_upper is passed in as a new upper bound for the 
+            # bracketing root finding algorithm after each node.              
+            f_upper = solve_for_filter_strength_illinois(modal_contributions, i, n_nodes,
+                                                         n_vars, thresholds, variables,
+                                                         equations, f_upper, tolerance,
+                                                         max_iterations_rootfinding)
         end
 
+        # apply the filter to the solution
         for i in eachnode(dg)
-            u_filtered = filtered_node_vars_at_index(modal_contributions, f_upper, i,
-                                                     n_nodes, n_vars)
+            u_filtered = filtered_solution_at_node(modal_contributions, f_upper, i,
+                                                     equations)
             set_node_vars!(u, u_filtered, equations, dg, i, element)
         end
     end

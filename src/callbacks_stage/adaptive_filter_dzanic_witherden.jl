@@ -8,7 +8,7 @@
 """
     PositivityPreservingFilterDzanicWitherden(; thresholds, variables,
                                                         tolerance = 1.0e-8,
-                                                        max_iterations = 20)
+                                                        max_iterations_rootfinding = 20)
 
 Positivity-preserving adaptive modal filter of
 - Dzanic, Witherden (2022)
@@ -21,7 +21,7 @@ associated `thresholds` to determine the minimal acceptable values. A single
 element-wise filter strength is computed such that all constraints are satisfied
 at all nodes. If the element mean violates a threshold, an error is thrown.
 
-The parameters `tolerance` and `max_iterations` control the Illinois modified
+The parameters `tolerance` and `max_iterations_rootfinding` control the Illinois modified
 regula falsi root solver used to determine the filter strength.
 """
 struct PositivityPreservingFilterDzanicWitherden{N,
@@ -32,15 +32,15 @@ struct PositivityPreservingFilterDzanicWitherden{N,
     thresholds::Thresholds
     variables::Variables
     tolerance::RealT
-    max_iterations::Int
+    max_iterations_rootfinding::Int
 end
 
 function PositivityPreservingFilterDzanicWitherden(; thresholds, variables,
                                                      tolerance = 1.0e-8,
-                                                     max_iterations = 100)
+                                                     max_iterations_rootfinding = 20)
     return PositivityPreservingFilterDzanicWitherden(thresholds, variables,
                                                      tolerance,
-                                                     max_iterations)
+                                                     max_iterations_rootfinding)
 end
 
 function (limiter!::PositivityPreservingFilterDzanicWitherden)(u_ode,
@@ -51,6 +51,7 @@ function (limiter!::PositivityPreservingFilterDzanicWitherden)(u_ode,
     @trixi_timeit timer() "positivity-preserving adaptive filter" begin
         adaptive_filter_dzanic_witherden!(u, limiter!.thresholds, limiter!.variables,
                                           limiter!.tolerance, limiter!.max_iterations,
+                                          limiter!.tolerance, limiter!.max_iterations_rootfinding,
                                           mesh_equations_solver_cache(semi)...)
     end
 
