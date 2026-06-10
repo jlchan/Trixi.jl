@@ -178,16 +178,6 @@ function (global_limiter!::PositivityPreservingLimiterLiuZhang)(u_ode, integrato
     return nothing
 end
 
-include("admissible_projection_euler.jl")
-
-# for any scalar equation, the admissible set is assumed to be u > u_lower, and 
-# projection to the admissible set is simply a clipping operation
-@inline function project_to_admissible_set(cell_average, lower_bound, variables,
-                                           equations::AbstractEquations{NDIMS, 1}) where {NDIMS}
-    # lower_bound and cell_average are SVectors of size 1
-    return SVector(max(lower_bound[1], cell_average[1]))
-end
-
 @inline function get_cell_volume(element, mesh::TreeMesh{NDIMS}, equations, dg,
                                  cache) where {NDIMS}
     return 2^NDIMS / (cache.elements.inverse_jacobian[element])
@@ -285,29 +275,4 @@ function global_cell_average_limiter!(u, cell_averages,
     return nothing
 end
 
-function set_u_mean!(u, new_cell_average, old_cell_average, element,
-                     mesh::AbstractMesh{1}, equations, dg, cache)
-    for i in eachnode(dg)
-        u_node = get_node_vars(u, equations, dg, i, element)
-        new_u_node = u_node + (new_cell_average - old_cell_average)
-        set_node_vars!(u, new_u_node, equations, dg, i, element)
-    end
-end
-
-function set_u_mean!(u, new_cell_average, old_cell_average, element,
-                     mesh::AbstractMesh{2}, equations, dg, cache)
-    for j in eachnode(dg), i in eachnode(dg)
-        u_node = get_node_vars(u, equations, dg, i, j, element)
-        new_u_node = u_node + (new_cell_average - old_cell_average)
-        set_node_vars!(u, new_u_node, equations, dg, i, j, element)
-    end
-end
-
-function set_u_mean!(u, new_cell_average, old_cell_average, element,
-                     mesh::AbstractMesh{3}, equations, dg, cache)
-    for k in eachnode(dg), j in eachnode(dg), i in eachnode(dg)
-        u_node = get_node_vars(u, equations, dg, i, j, k, element)
-        new_u_node = u_node + (new_cell_average - old_cell_average)
-        set_node_vars!(u, new_u_node, equations, dg, i, j, k, element)
-    end
-end
+include("admissible_projection.jl")
