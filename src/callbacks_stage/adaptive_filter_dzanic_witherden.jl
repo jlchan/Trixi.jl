@@ -50,7 +50,6 @@ function (limiter!::PositivityPreservingFilterDzanicWitherden)(u_ode,
     u = wrap_array(u_ode, semi)
     @trixi_timeit timer() "positivity-preserving adaptive filter" begin
         adaptive_filter_dzanic_witherden!(u, limiter!.thresholds, limiter!.variables,
-                                          limiter!.tolerance, limiter!.max_iterations,
                                           limiter!.tolerance, limiter!.max_iterations_rootfinding,
                                           mesh_equations_solver_cache(semi)...)
     end
