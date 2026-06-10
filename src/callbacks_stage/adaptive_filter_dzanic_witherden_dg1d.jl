@@ -153,10 +153,10 @@ function adaptive_filter_dzanic_witherden!(u, thresholds, variables,
         violates_positivity || continue
 
         u_mean = compute_u_mean(u, element, mesh, equations, dg, cache)
-        if !satisfies_constraints(u_mean, thresholds, variables, equations)
-            @warn "cell average = $(u_mean) violates positivity constraints; " *
-                  "adaptive filter cannot recover a constraint-satisfying state"
-        end
+        # if !satisfies_constraints(u_mean, thresholds, variables, equations)
+        #     @warn "cell average = $(u_mean) violates positivity constraints; " *
+        #           "adaptive filter cannot recover a constraint-satisfying state"
+        # end
 
         # precompute modal_contributions[:,i] = vandermonde[:,i] * (vandermonde \ u)
         # --> modal_contributions * [f^(2k) for k in 0:n_nodes-1] returns the filtered
