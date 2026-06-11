@@ -7,8 +7,8 @@
 
 """
     PositivityPreservingFilterDzanicWitherden(; thresholds, variables,
-                                                        tolerance = 1.0e-8,
-                                                        max_iterations_rootfinding = 20)
+                                                tolerance = 1.0e-8,
+                                                max_iterations_rootfinding = 20)
 
 Positivity-preserving adaptive modal filter of
 - Dzanic, Witherden (2022)
@@ -21,8 +21,8 @@ associated `thresholds` to determine the minimal acceptable values. A single
 element-wise filter strength is computed such that all constraints are satisfied
 at all nodes. If the element mean violates a threshold, an error is thrown.
 
-The parameters `tolerance` and `max_iterations_rootfinding` control the Illinois modified
-regula falsi root solver used to determine the filter strength.
+The parameters `tolerance` and `max_iterations_rootfinding` control the Illinois 
+modified regula falsi root solver used to determine the filter strength.
 """
 struct PositivityPreservingFilterDzanicWitherden{N,
                                                  Thresholds <:
