@@ -56,36 +56,28 @@ end
     # Compute local Mach number
     a_local = sqrt(equations.gamma * p_local / rho_local)
     Mach_local = abs(v_normal / a_local)
-    if Mach_local < 1.0 # The `if` is not needed in this elixir but kept for generality
-        # In general, `p_local` need not be available from the initial condition
-        p_upstream = pressure(initial_condition_high_mach_flow(x, t, equations), equations)
 
-        # use normal shock relations to compute the downstream pressure        
-        factor = 1 + 2 * gamma / (gamma + 1) * (mach_number()^2 - 1)
-        p_local = p_upstream * factor
-    end
-
+    # for supersonic_outflow = Mach_local > 1.0 && v_normal >= 0
     # Create the `u_surface` solution state where the local pressure is possibly set from an external value
     prim = SVector(rho_local, v_normal, v_tangent, p_local)
     u_boundary = prim2cons(prim, equations)
     u_surface = Trixi.rotate_from_x(u_boundary, normal, equations)
+    outflow_flux = flux(u_surface, normal_direction, equations)
+
+    # check edge cases
+    subsonic_outflow = Mach_local < 1.0 && v_normal >= 0
+    supersonic_inflow = Mach_local > 1.0 && v_normal < 0
+    subsonic_inflow = Mach_local < 1.0 && v_normal < 0
+    if subsonic_outflow || supersonic_inflow || subsonic_inflow
+        outflow_flux = boundary_condition_slip_wall(u_inner, normal_direction, x, t, 
+                                                    surface_flux_function, equations)
+    end
 
     # Compute the flux using the appropriate mixture of internal / external solution states
-    return flux(u_surface, normal_direction, equations)
+    return outflow_flux
 end
 
 initial_condition = initial_condition_high_mach_flow
-
-# Supersonic inflow boundary condition.
-# Calculate the boundary flux entirely from the external solution state, i.e., set
-# external solution state values for everything entering the domain.
-@inline function boundary_condition_supersonic_inflow(u_inner,
-                                                      normal_direction::AbstractVector,
-                                                      x, t, surface_flux_function,
-                                                      equations::CompressibleEulerEquations2D)
-    u_boundary = initial_condition_high_mach_flow(x, t, equations)
-    return flux(u_boundary, normal_direction, equations)
-end
 
 # Supersonic outflow boundary condition.
 # Calculate the boundary flux entirely from the internal solution state. Analogous to supersonic inflow
@@ -100,9 +92,9 @@ end
 boundary_conditions = (; Bottom = boundary_condition_slip_wall,
                          Circle = boundary_condition_slip_wall,
                          Top = boundary_condition_slip_wall,
-                         #Right = boundary_condition_outflow_general,
-                         Right = boundary_condition_outflow,
-                         Left = boundary_condition_supersonic_inflow
+                         Right = boundary_condition_outflow_general,
+                        #  Right = boundary_condition_outflow,
+                         Left = BoundaryConditionDirichlet(initial_condition_high_mach_flow)
                          )
 
 surface_flux = flux_lax_friedrichs
@@ -162,9 +154,13 @@ save_solution = SaveSolutionCallback(interval = 1000,
                                      solution_variables = cons2prim,
                                      output_directory=output_directory)
 
+stepsize_callback = StepsizeCallback(cfl = 0.7)
+
 callbacks = CallbackSet(summary_callback, 
                         alive_callback, 
-                        save_solution, save_restart)
+                        stepsize_callback,
+                        save_solution, 
+                        save_restart)
 
 local_limiter! = PositivityPreservingLimiterZhangShu(thresholds = (1.0e-8, 1.0e-8),
                                                      variables = (Trixi.density,
@@ -172,13 +168,14 @@ local_limiter! = PositivityPreservingLimiterZhangShu(thresholds = (1.0e-8, 1.0e-
 global_limiter! = PositivityPreservingLimiterLiuZhang(local_limiter!, semi;
                                                       record_davis_yin_iterations = true)
 
-ode_solver = RDPK3SpFSAL35(; stage_limiter! = global_limiter!,
+ode_solver = RDPK3SpFSAL49(; stage_limiter! = global_limiter!,
                              step_limiter! = global_limiter!)
 
 ###############################################################################
 # run the simulation
 sol = solve(ode, ode_solver;
-            adaptive = true, dt = 1e-7, abstol = 1e-5, reltol = 1e-3,
+            # adaptive = true, dt = 1e-7, abstol = 1e-5, reltol = 1e-3,
+            adaptive = false, dt = 1,
             saveat=LinRange(tspan..., 25), callback = callbacks);
 
 # using Plots
