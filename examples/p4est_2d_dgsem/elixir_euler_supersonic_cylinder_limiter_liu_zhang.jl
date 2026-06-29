@@ -15,16 +15,19 @@
 
 using OrdinaryDiffEqLowStorageRK
 using Trixi
+using Trixi: norm
 
 ###############################################################################
 # semidiscretization of the compressible Euler equations
 
 equations = CompressibleEulerEquations2D(1.4)
 
+mach_number() = 3
+
 @inline function initial_condition_high_mach_flow(x, t, equations::CompressibleEulerEquations2D)
     # set the freestream flow parameters
     rho_freestream = 1.4
-    v1 = 3.0
+    v1 = mach_number()
     v2 = 0.0
     p_freestream = 1.0
 
@@ -36,6 +39,8 @@ end
                                                     normal_direction::AbstractVector, x, t,
                                                     surface_flux_function,
                                                     equations::CompressibleEulerEquations2D)
+
+    (; gamma, inv_gamma_minus_one) = equations 
 
     # This would be for the general case where we need to check the magnitude of the local Mach number
     norm_ = norm(normal_direction)
@@ -51,9 +56,13 @@ end
     # Compute local Mach number
     a_local = sqrt(equations.gamma * p_local / rho_local)
     Mach_local = abs(v_normal / a_local)
-    if Mach_local <= 1.0 # The `if` is not needed in this elixir but kept for generality
+    if Mach_local < 1.0 # The `if` is not needed in this elixir but kept for generality
         # In general, `p_local` need not be available from the initial condition
-        p_local = pressure(initial_condition_subsonic(x, t, equations), equations)
+        p_upstream = pressure(initial_condition_high_mach_flow(x, t, equations), equations)
+
+        # use normal shock relations to compute the downstream pressure        
+        factor = 1 + 2 * gamma / (gamma + 1) * (mach_number()^2 - 1)
+        p_local = p_upstream * factor
     end
 
     # Create the `u_surface` solution state where the local pressure is possibly set from an external value
@@ -67,11 +76,34 @@ end
 
 initial_condition = initial_condition_high_mach_flow
 
+# Supersonic inflow boundary condition.
+# Calculate the boundary flux entirely from the external solution state, i.e., set
+# external solution state values for everything entering the domain.
+@inline function boundary_condition_supersonic_inflow(u_inner,
+                                                      normal_direction::AbstractVector,
+                                                      x, t, surface_flux_function,
+                                                      equations::CompressibleEulerEquations2D)
+    u_boundary = initial_condition_high_mach_flow(x, t, equations)
+    return flux(u_boundary, normal_direction, equations)
+end
+
+# Supersonic outflow boundary condition.
+# Calculate the boundary flux entirely from the internal solution state. Analogous to supersonic inflow
+# except all the solution state values are set from the internal solution as everything leaves the domain
+@inline function boundary_condition_outflow(u_inner, normal_direction::AbstractVector, x, t,
+                                            surface_flux_function,
+                                            equations::CompressibleEulerEquations2D)
+    return flux(u_inner, normal_direction, equations)
+end
+
+
 boundary_conditions = (; Bottom = boundary_condition_slip_wall,
                          Circle = boundary_condition_slip_wall,
                          Top = boundary_condition_slip_wall,
-                         Right = boundary_condition_outflow_general,
-                         Left = BoundaryConditionDirichlet(initial_condition_high_mach_flow))
+                         #Right = boundary_condition_outflow_general,
+                         Right = boundary_condition_outflow,
+                         Left = boundary_condition_supersonic_inflow
+                         )
 
 surface_flux = flux_lax_friedrichs
 
@@ -105,7 +137,7 @@ semi = SemidiscretizationHyperbolic(mesh, equations, initial_condition, solver;
 ###############################################################################
 # ODE solvers
 
-tspan = (0.0, 20.0)
+tspan = (0.0, 10.0)
 ode = semidiscretize(semi, tspan)
 
 # using Plots
@@ -122,10 +154,13 @@ alive_callback = AliveCallback(alive_interval = 2000)
 save_restart = SaveRestartCallback(interval = 1000,
                                    save_final_restart = true)
 
+output_directory = normpath(joinpath("out", "mach$(mach_number())_scaling$(indicator_ec.scaling)"))
+@show output_directory
 save_solution = SaveSolutionCallback(interval = 1000,
                                      save_initial_solution = true,
                                      save_final_solution = true,
-                                     solution_variables = cons2prim)
+                                     solution_variables = cons2prim,
+                                     output_directory=output_directory)
 
 callbacks = CallbackSet(summary_callback, 
                         alive_callback, 
@@ -144,8 +179,7 @@ ode_solver = RDPK3SpFSAL35(; stage_limiter! = global_limiter!,
 # run the simulation
 sol = solve(ode, ode_solver;
             adaptive = true, dt = 1e-7, abstol = 1e-5, reltol = 1e-3,
-            # adaptive = false, dt = 1,
-            saveat=LinRange(tspan..., 800), callback = callbacks);
+            saveat=LinRange(tspan..., 25), callback = callbacks);
 
 # using Plots
 # @gif for i in eachindex(sol.u)
