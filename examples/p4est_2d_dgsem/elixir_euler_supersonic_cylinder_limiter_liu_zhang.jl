@@ -64,14 +64,14 @@ end
     u_surface = Trixi.rotate_from_x(u_boundary, normal, equations)
     outflow_flux = flux(u_surface, normal_direction, equations)
 
-    # check edge cases
-    subsonic_outflow = Mach_local < 1.0 && v_normal >= 0
-    supersonic_inflow = Mach_local > 1.0 && v_normal < 0
-    subsonic_inflow = Mach_local < 1.0 && v_normal < 0
-    if subsonic_outflow || supersonic_inflow || subsonic_inflow
-        outflow_flux = boundary_condition_slip_wall(u_inner, normal_direction, x, t, 
-                                                    surface_flux_function, equations)
-    end
+    # # check edge cases
+    # subsonic_outflow = Mach_local < 1.0 && v_normal >= 0
+    # supersonic_inflow = Mach_local > 1.0 && v_normal < 0
+    # subsonic_inflow = Mach_local < 1.0 && v_normal < 0
+    # if subsonic_outflow || supersonic_inflow || subsonic_inflow
+    #     outflow_flux = boundary_condition_slip_wall(u_inner, normal_direction, x, t, 
+    #                                                 surface_flux_function, equations)
+    # end
 
     # Compute the flux using the appropriate mixture of internal / external solution states
     return outflow_flux
@@ -92,8 +92,7 @@ end
 boundary_conditions = (; Bottom = boundary_condition_slip_wall,
                          Circle = boundary_condition_slip_wall,
                          Top = boundary_condition_slip_wall,
-                         Right = boundary_condition_outflow_general,
-                        #  Right = boundary_condition_outflow,
+                         Right = boundary_condition_outflow,
                          Left = BoundaryConditionDirichlet(initial_condition_high_mach_flow)
                          )
 
@@ -118,10 +117,14 @@ volume_integral = VolumeIntegralAdaptive(indicator_ec,
 solver = DGSEM(basis, surface_flux, volume_integral)
 
 # Get the unstructured quad mesh from a file (downloads the file if not available locally)
-mesh_file = Trixi.download("https://gist.githubusercontent.com/andrewwinters5000/a08f78f6b185b63c3baeff911a63f628/raw/addac716ea0541f588b9d2bd3f92f643eb27b88f/abaqus_cylinder_in_channel.inp",
-                           joinpath(@__DIR__, "abaqus_cylinder_in_channel.inp"))
+# mesh_file = Trixi.download("https://gist.githubusercontent.com/andrewwinters5000/a08f78f6b185b63c3baeff911a63f628/raw/addac716ea0541f588b9d2bd3f92f643eb27b88f/abaqus_cylinder_in_channel.inp",
+#                            joinpath(@__DIR__, "abaqus_cylinder_in_channel.inp"))
+#
+# mesh = P4estMesh{2}(mesh_file; initial_refinement_level=3)
 
-mesh = P4estMesh{2}(mesh_file; initial_refinement_level=3)
+# Uniform channel mesh with cylinder; generated from cylinder_channel_uniform.control via HOHQMesh
+mesh_file = joinpath(@__DIR__, "cylinder_channel_uniform.inp")
+mesh = P4estMesh{2}(mesh_file; initial_refinement_level=0)
 
 semi = SemidiscretizationHyperbolic(mesh, equations, initial_condition, solver;
                                     boundary_conditions = boundary_conditions)
@@ -154,11 +157,11 @@ save_solution = SaveSolutionCallback(interval = 1000,
                                      solution_variables = cons2prim,
                                      output_directory=output_directory)
 
-stepsize_callback = StepsizeCallback(cfl = 0.7)
+stepsize_callback = StepsizeCallback(cfl = 0.8)
 
 callbacks = CallbackSet(summary_callback, 
                         alive_callback, 
-                        stepsize_callback,
+                        # stepsize_callback,
                         save_solution, 
                         save_restart)
 
@@ -174,16 +177,16 @@ ode_solver = RDPK3SpFSAL49(; stage_limiter! = global_limiter!,
 ###############################################################################
 # run the simulation
 sol = solve(ode, ode_solver;
-            # adaptive = true, dt = 1e-7, abstol = 1e-5, reltol = 1e-3,
-            adaptive = false, dt = 1,
+            adaptive = true, dt = 1e-7, abstol = 1e-5, reltol = 1e-4,
+            # adaptive = false, dt = 1,
             saveat=LinRange(tspan..., 25), callback = callbacks);
 
 # using Plots
 # @gif for i in eachindex(sol.u)
 #     pd = PlotData2D(sol.u[i], semi)
-#     plot(pd["rho"], clims=(0.0, 7.0), title="Time: $(sol.t[i])", dpi=400)
+#     plot(pd["rho"], clims=(0.0, 7.0), title="Time: $(sol.t[i])", dpi=300)
 # end 
 
-# using Plots
-# pd = PlotData2D(sol.u[end], semi)
-# plot(pd["rho"], clims=(0.0, 7.0), title="Time: $(sol.t[end])", dpi=400)
+using Plots
+pd = PlotData2D(sol.u[end], semi)
+plot(pd["rho"], clims=(0.0, 7.0), title="Time: $(sol.t[end])", dpi=300)

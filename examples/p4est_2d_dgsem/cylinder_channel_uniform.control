@@ -1,0 +1,49 @@
+% Uniform channel mesh with circular cylinder for supersonic cylinder example.
+% Domain: [0, 4] x [-1, 1], cylinder diameter 0.5 centered at (0.6, 0.0).
+
+\begin{CONTROL_INPUT}
+
+    \begin{RUN_PARAMETERS}
+        mesh file name   = cylinder_channel_uniform.mesh
+        plot file name   = cylinder_channel_uniform.tec
+        stats file name  = none
+        mesh file format = ABAQUS
+        polynomial order = 3
+        plot file format = skeleton
+    \end{RUN_PARAMETERS}
+
+    \begin{BACKGROUND_GRID}
+        x0 = [0.0, -1.0, 0.0]
+        % dx = 4/134 = 2/67 ~ 0.03 gives domain [0, 4] x [-1, 1]
+        dx = [0.02985074626865672, 0.02985074626865672, 0.0]
+        N  = [134, 67, 1]
+    \end{BACKGROUND_GRID}
+
+    \begin{SPRING_SMOOTHER}
+        smoothing            = ON
+        smoothing type       = LinearAndCrossBarSpring
+        number of iterations = 25
+    \end{SPRING_SMOOTHER}
+
+\end{CONTROL_INPUT}
+
+\begin{MODEL}
+
+    \begin{INNER_BOUNDARIES}
+
+        \begin{CHAIN}
+            name = Cylinder
+            \begin{CIRCULAR_ARC}
+                name        = Circle
+                units       = degrees
+                center      = [0.6, 0.0, 0.0]
+                radius      = 0.25
+                start angle = 0.0
+                end angle   = 360.0
+            \end{CIRCULAR_ARC}
+        \end{CHAIN}
+
+    \end{INNER_BOUNDARIES}
+
+\end{MODEL}
+\end{FILE}
