@@ -123,7 +123,7 @@ solver = DGSEM(basis, surface_flux, volume_integral)
 # mesh = P4estMesh{2}(mesh_file; initial_refinement_level=3)
 
 # Uniform channel mesh with cylinder; generated from cylinder_channel_uniform.control via HOHQMesh
-mesh_file = joinpath(@__DIR__, "cylinder_channel_uniform.inp")
+mesh_file = joinpath(@__DIR__, "abaqus_cylinder_channel_uniform.inp")
 mesh = P4estMesh{2}(mesh_file; initial_refinement_level=0)
 
 semi = SemidiscretizationHyperbolic(mesh, equations, initial_condition, solver;
