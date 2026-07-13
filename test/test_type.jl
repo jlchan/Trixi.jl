@@ -2959,11 +2959,7 @@ end
             # 3D compressible Euler
             equations_3d = CompressibleEulerEquations3D(RealT(5 / 3))
 
-            converted_thresholds_3d, converted_variables_3d = @inferred Trixi.convert_variables_and_thresholds(lower_bounds,
-                                                                                                               variables,
-                                                                                                               equations_3d)
-            @test eltype(converted_thresholds_3d) == RealT
-            @test converted_variables_3d == (density, energy_internal)
+            # no test for convert_variables_and_thresholds in 3D since it is the same as in 1D
 
             u_admissible = prim2cons(SVector(RealT(1), zero(RealT), zero(RealT),
                                              zero(RealT), RealT(1)),
