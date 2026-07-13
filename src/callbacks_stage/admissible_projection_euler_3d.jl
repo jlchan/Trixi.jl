@@ -8,20 +8,16 @@
 @muladd begin
 #! format: noindent
 
-# Choose the largest-magnitude momentum as the primary KKT variable.
+# Choose the largest-magnitude momentum component as the primary KKT variable
+# so that a = 1 + (m_secondary_1/m_primary)^2 + (m_secondary_2/m_primary)^2
+# avoids dividing by a near-zero primary.
 @inline function primary_momentum_index(rho_v1, rho_v2, rho_v3)
-    abs_v1 = abs(rho_v1)
-    abs_v2 = abs(rho_v2)
-    abs_v3 = abs(rho_v3)
-    if abs_v1 >= abs_v2 && abs_v1 >= abs_v3
-        return 1
-    elseif abs_v2 >= abs_v3
-        return 2
-    else
-        return 3
-    end
+    return argmax((abs(rho_v1), abs(rho_v2), abs(rho_v3)))
 end
 
+# Reorder (ρv₁, ρv₂, ρv₃) into (primary, secondary_1, secondary_2) so the
+# cubic / λ=0 branches solve for one scalar momentum and recover the other two
+# by proportional scaling m_secondary = (v_secondary / v_primary) * m_primary.
 @inline function primary_and_secondary_momenta(rho_v1, rho_v2, rho_v3, primary_idx)
     if primary_idx == 1
         return rho_v1, rho_v2, rho_v3
@@ -32,6 +28,8 @@ end
     end
 end
 
+# Inverse of primary_and_secondary_momenta: place primary/secondary roles back
+# into physical (ρ, ρv₁, ρv₂, ρv₃, ρe) order for a candidate state.
 @inline function assemble_3d_conserved(rho, rho_v_primary, rho_v_secondary_1,
                                        rho_v_secondary_2, rho_e_total, primary_idx)
     if primary_idx == 1
