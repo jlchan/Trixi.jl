@@ -4168,6 +4168,88 @@ end
         @test u_proj[4]≈2.5000000028466725e-8 rtol=1e-12
         @test energy_internal(u_proj, equations) >= lower_bounds[2] - arithmetic_tol
     end
+
+    @testset "3D zero-momentum KKT candidates" begin
+        equations = CompressibleEulerEquations3D(1.4)
+        lower_bounds = (1.0, 0.5)
+        variables = (density, energy_internal)
+
+        # mu > 0 and lambda > 0 with near-zero momentum
+        u_both_active = SVector(0.25, 0.0, 0.0, 0.0, 0.1)
+        u_proj_both = Trixi.project_to_admissible_set(u_both_active, lower_bounds,
+                                                      variables, equations)
+        @test u_proj_both == SVector(1.0, 0.0, 0.0, 0.0, 0.5)
+
+        # mu > 0 and lambda = 0 with near-zero momentum
+        u_energy_only = SVector(2.0, 0.0, 0.0, 0.0, 0.1)
+        u_proj_energy = Trixi.project_to_admissible_set(u_energy_only, lower_bounds,
+                                                        variables, equations)
+        @test u_proj_energy == SVector(2.0, 0.0, 0.0, 0.0, 0.5)
+    end
+
+    @testset "Consistency between 2D and 3D projections when v3 = 0" begin
+        equations_2d = CompressibleEulerEquations2D(1.4)
+        equations_3d = CompressibleEulerEquations3D(1.4)
+        u_2d = SVector(0.5, 1.0, -2.0, 0.1)
+        u_3d = SVector(0.5, 1.0, -2.0, 0.0, 0.1)
+        lower_bounds = (1.0, 0.1)
+        variables = (density, energy_internal)
+
+        u_projected_2d = Trixi.project_to_admissible_set(u_2d, lower_bounds, variables,
+                                                         equations_2d)
+        u_projected_3d = Trixi.project_to_admissible_set(u_3d, lower_bounds, variables,
+                                                         equations_3d)
+
+        @test u_projected_3d[1] ≈ u_projected_2d[1]
+        @test u_projected_3d[2] ≈ u_projected_2d[2]
+        @test u_projected_3d[3] ≈ u_projected_2d[3]
+        @test u_projected_3d[4] == 0.0
+        @test u_projected_3d[5] ≈ u_projected_2d[4]
+    end
+
+    @testset "3D projection with nonzero momentum, admissibility, and idempotence" begin
+        equations = CompressibleEulerEquations3D(1.4)
+        u = SVector(0.5, 1.0, -2.0, 0.5, 0.1)
+        lower_bounds = (1.0, 0.1)
+        variables = (density, energy_internal)
+
+        u_projected = Trixi.project_to_admissible_set(u, lower_bounds, variables, equations)
+        arithmetic_tol = Trixi.euler_arithmetic_tol(lower_bounds[1], lower_bounds[2])
+
+        @test u_projected[1] >= lower_bounds[1] - arithmetic_tol
+        @test energy_internal(u_projected, equations) >= lower_bounds[2] - arithmetic_tol
+        @test Trixi.project_to_admissible_set(u_projected, lower_bounds, variables,
+                                              equations) == u_projected
+    end
+
+    @testset "3D projection is symmetric under momentum permutation" begin
+        equations = CompressibleEulerEquations3D(1.4)
+        lower_bounds = (1.0, 0.1)
+        variables = (density, energy_internal)
+        u = SVector(0.5, 1.0, -2.0, 0.5, 0.1)
+
+        u_projected = Trixi.project_to_admissible_set(u, lower_bounds, variables, equations)
+
+        # Swap v1 <-> v2
+        u_swap_12 = SVector(u[1], u[3], u[2], u[4], u[5])
+        u_proj_swap_12 = Trixi.project_to_admissible_set(u_swap_12, lower_bounds, variables,
+                                                         equations)
+        @test u_proj_swap_12[1] ≈ u_projected[1]
+        @test u_proj_swap_12[2] ≈ u_projected[3]
+        @test u_proj_swap_12[3] ≈ u_projected[2]
+        @test u_proj_swap_12[4] ≈ u_projected[4]
+        @test u_proj_swap_12[5] ≈ u_projected[5]
+
+        # Swap v1 <-> v3
+        u_swap_13 = SVector(u[1], u[4], u[3], u[2], u[5])
+        u_proj_swap_13 = Trixi.project_to_admissible_set(u_swap_13, lower_bounds, variables,
+                                                         equations)
+        @test u_proj_swap_13[1] ≈ u_projected[1]
+        @test u_proj_swap_13[2] ≈ u_projected[4]
+        @test u_proj_swap_13[3] ≈ u_projected[3]
+        @test u_proj_swap_13[4] ≈ u_projected[2]
+        @test u_proj_swap_13[5] ≈ u_projected[5]
+    end
 end
 
 @testset "load_mesh n_cells_max compatibility" begin

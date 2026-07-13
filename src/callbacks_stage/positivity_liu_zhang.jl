@@ -68,7 +68,8 @@ end
 # to `(rho_floor, rho_e_floor)` with variables `(Trixi.density, energy_internal)`.
 function convert_variables_and_thresholds(thresholds, variables,
                                           equations::Union{CompressibleEulerEquations1D,
-                                                           CompressibleEulerEquations2D})
+                                                           CompressibleEulerEquations2D,
+                                                           CompressibleEulerEquations3D})
     if length(thresholds) != 2 || length(variables) != 2
         error("PositivityPreservingLimiterLiuZhang for compressible Euler requires exactly ",
               "two limiter variables: one for density and one for internal energy or pressure.")
