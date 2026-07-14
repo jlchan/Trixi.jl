@@ -395,6 +395,56 @@ end
     @test_allocations(Trixi.rhs!, semi, sol, 1000)
 end
 
+@testitem "P4estMesh3D: elixir_euler_sedov_limiter_liu_zhang.jl" setup=[
+    Setup,
+    P4estMesh3D
+] tags=[:p4est_part2] begin
+    @test_trixi_include(joinpath(EXAMPLES_DIR,
+                                 "elixir_euler_sedov_limiter_liu_zhang.jl"),
+                        tspan=(0.0, 0.1),
+                        l2=[
+                            0.07044116045034314,
+                            0.04904803660038056,
+                            0.04904803660037848,
+                            0.04904803660038028,
+                            0.28865037570675856
+                        ],
+                        linf=[
+                            0.915441022967389,
+                            0.9130480387246995,
+                            0.9130480387243655,
+                            0.913048038724617,
+                            3.7249958393832032
+                        ],
+                        atol=5e-2, # limiters are not smooth, so we need bigger tolerances
+                        rtol=1e-2)
+
+    # check that the global cell-average limiter is activated; the precise
+    # number can vary slightly by architecture
+    @test length(global_limiter!.history_davis_yin_iterations) >= 1
+
+    # Verify nodal density and pressure remain above the Zhang-Shu thresholds.
+    u = Trixi.wrap_array_native(sol.u[end], semi)
+    equations_ = semi.equations
+    dg_ = semi.solver
+    thresholds = local_limiter!.thresholds
+    arithmetic_tol = Trixi.euler_arithmetic_tol(thresholds[1], thresholds[2])
+    min_rho, min_p = let min_rho = typemax(eltype(u)), min_p = typemax(eltype(u))
+        for e in axes(u, 5), k in axes(u, 4), j in axes(u, 3), i in axes(u, 2)
+            u_node = Trixi.get_node_vars(u, equations_, dg_, i, j, k, e)
+            min_rho = min(min_rho, Trixi.density(u_node, equations_))
+            min_p = min(min_p, pressure(u_node, equations_))
+        end
+        min_rho, min_p
+    end
+    @test min_rho >= thresholds[1] - arithmetic_tol
+    @test min_p >= thresholds[2] - arithmetic_tol
+
+    # Ensure that we do not have excessive memory allocations
+    # (e.g., from type instabilities)
+    @test_allocations(Trixi.rhs!, semi, sol, 1000)
+end
+
 @testitem "P4estMesh3D: elixir_euler_sedov_sc_subcell.jl (positivity bounds)" setup=[
     Setup,
     P4estMesh3D
