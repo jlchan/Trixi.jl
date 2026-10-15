@@ -4348,8 +4348,12 @@ end
         @test energy_internal(u_projected, equations) > lower_bounds[2] - arithmetic_tol
     end
 
-    # this test failed without the rationalized approximation of
-    # 0.5 * (rho - sqrt_discriminant_rho) in PositivityPreservingLimiterLiuZhang.
+    # This test failed without the rationalized evaluation of the cancelling density root
+    # 0.5 * (rho - sqrt_discriminant_rho) in PositivityPreservingLimiterLiuZhang. The
+    # reference values were computed with BigFloat. Before rho^2 - discriminant_rho was
+    # kept as a separate quantity, cancellation in the momentum discriminant gave momentum
+    # components that were too large by a factor of about 2.5 and a slightly infeasible
+    # internal energy.
     @testset "2D projection near zero momentum boundary" begin
         equations = CompressibleEulerEquations2D(1.4)
         u = SVector(0.9376339560775117,
@@ -4363,9 +4367,66 @@ end
         arithmetic_tol = Trixi.euler_arithmetic_tol(lower_bounds[1], lower_bounds[2])
 
         @test u_proj[1]≈0.9376339560775118 rtol=1e-12
-        @test u_proj[2]≈6.637197729990257e-9 rtol=1e-12
-        @test u_proj[3]≈3.05456167498393e-9 rtol=1e-12
-        @test u_proj[4]≈2.5000000028466725e-8 rtol=1e-12
+        @test u_proj[2]≈2.691406109952544e-9 rtol=1e-12
+        @test u_proj[3]≈1.2386350821117836e-9 rtol=1e-12
+        @test u_proj[4]≈2.500000000468087e-8 rtol=1e-12
+        @test energy_internal(u_proj, equations) >= lower_bounds[2] - arithmetic_tol
+    end
+
+    # These states (from a Leblanc shock tube run) have negative density. The projection
+    # threw for them when the plus density root 0.5 * (rho + sqrt_discriminant_rho) was
+    # evaluated directly: catastrophic cancellation for rho < 0 made the candidate fail
+    # the mu > 0 check by a relative margin of about 1e-11. Reference values were
+    # computed with BigFloat.
+    @testset "1D projection with negative density" begin
+        equations = CompressibleEulerEquations1D(1.4)
+        lower_bounds = (1e-12, 1e-12)
+        variables = (density, energy_internal)
+        arithmetic_tol = Trixi.euler_arithmetic_tol(lower_bounds[1], lower_bounds[2])
+
+        u = SVector(-1.7395211818679715e-5, 8.41105406189703e-7, 0.00667067676612506)
+        u_proj = Trixi.project_to_admissible_set(u, lower_bounds, variables, equations)
+        @test u_proj[1]≈5.2751992321277504e-11 rtol=1e-12
+        @test u_proj[2]≈8.389177426885884e-7 rtol=1e-12
+        @test u_proj[3]≈0.006670676766262626 rtol=1e-12
+        @test u_proj[1] >= lower_bounds[1] - arithmetic_tol
+        @test energy_internal(u_proj, equations) >= lower_bounds[2] - arithmetic_tol
+
+        u = SVector(-3.200554437701057e-5, 2.3679209518244104e-7, 0.002367719903825862)
+        u_proj = Trixi.project_to_admissible_set(u, lower_bounds, variables, equations)
+        @test u_proj[1]≈1.1526875745778446e-11 rtol=1e-12
+        @test u_proj[2]≈2.3363395781639438e-7 rtol=1e-12
+        @test u_proj[3]≈0.002367719903981676 rtol=1e-12
+        @test u_proj[1] >= lower_bounds[1] - arithmetic_tol
+        @test energy_internal(u_proj, equations) >= lower_bounds[2] - arithmetic_tol
+    end
+
+    # Same states embedded in 2D (the same cancellation occurred there). With v2 = 0 the
+    # result must equal the 1D projection; with a rotated momentum the reference values
+    # were computed with BigFloat.
+    @testset "2D projection with negative density" begin
+        equations = CompressibleEulerEquations2D(1.4)
+        lower_bounds = (1e-12, 1e-12)
+        variables = (density, energy_internal)
+        arithmetic_tol = Trixi.euler_arithmetic_tol(lower_bounds[1], lower_bounds[2])
+
+        u = SVector(-1.7395211818679715e-5, 8.41105406189703e-7, 0.0, 0.00667067676612506)
+        u_proj = Trixi.project_to_admissible_set(u, lower_bounds, variables, equations)
+        @test u_proj[1]≈5.2751992321277504e-11 rtol=1e-12
+        @test u_proj[2]≈8.389177426885884e-7 rtol=1e-12
+        @test u_proj[3] == 0.0
+        @test u_proj[4]≈0.006670676766262626 rtol=1e-12
+        @test u_proj[1] >= lower_bounds[1] - arithmetic_tol
+        @test energy_internal(u_proj, equations) >= lower_bounds[2] - arithmetic_tol
+
+        u = SVector(-1.7395211818679715e-5, 8.41105406189703e-7 * cos(0.7),
+                    8.41105406189703e-7 * sin(0.7), 0.00667067676612506)
+        u_proj = Trixi.project_to_admissible_set(u, lower_bounds, variables, equations)
+        @test u_proj[1]≈5.2751992321277504e-11 rtol=1e-12
+        @test u_proj[2]≈6.416396812697055e-7 rtol=1e-12
+        @test u_proj[3]≈5.404456479775068e-7 rtol=1e-12
+        @test u_proj[4]≈0.006670676766262626 rtol=1e-12
+        @test u_proj[1] >= lower_bounds[1] - arithmetic_tol
         @test energy_internal(u_proj, equations) >= lower_bounds[2] - arithmetic_tol
     end
 end

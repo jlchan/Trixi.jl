@@ -198,22 +198,37 @@ function project_to_admissible_set(cell_average, lower_bounds, variables,
                                                                               equations)
         end
     else
-        discriminant_rho = rho * rho -
-                           (2 * rho * rho_v1 * rho_v1 * (rho_e_total - rho_e_floor) -
-                            rho_v1^4) /
-                           (2 * rho_v1 * rho_v1 + (rho_e_floor + rho - rho_e_total)^2)
+        # ρ² - Δ_ρ is kept separately so that it is not recovered by subtracting the
+        # nearly equal ρ² and Δ_ρ below, which loses all of its significant digits
+        # when it is small compared to ρ².
+        rho_squared_minus_discriminant = (2 * rho * rho_v1 * rho_v1 *
+                                          (rho_e_total - rho_e_floor) -
+                                          rho_v1^4) /
+                                         (2 * rho_v1 * rho_v1 +
+                                          (rho_e_floor + rho - rho_e_total)^2)
+        discriminant_rho = rho * rho - rho_squared_minus_discriminant
         has_real_rho_candidates = discriminant_rho >= zero(discriminant_rho)
         if has_real_rho_candidates
             sqrt_discriminant_rho = sqrt(discriminant_rho)
-            for rho_candidate in (0.5f0 * a_minus_sqrt_b_rationalized(rho,
-                                                              discriminant_rho,
-                                                              sqrt_discriminant_rho),
+            # The density candidates are ½(ρ ± √Δ_ρ). The root that adds terms of opposite
+            # sign (the minus root for ρ > 0, the plus root for ρ ≤ 0) suffers catastrophic
+            # cancellation, so it is evaluated as ½(ρ² - Δ_ρ) / (ρ ∓ √Δ_ρ) instead. The
+            # cancellation for ρ < 0 made the μ > 0 check below reject the true projection
+            # of states with negative density.
+            if rho > zero(rho)
+                rho_candidates = (0.5f0 * rho_squared_minus_discriminant /
+                                  (rho + sqrt_discriminant_rho),
                                   0.5f0 * (rho + sqrt_discriminant_rho))
+            else
+                rho_candidates = (0.5f0 * (rho - sqrt_discriminant_rho),
+                                  0.5f0 * rho_squared_minus_discriminant /
+                                  (rho - sqrt_discriminant_rho))
+            end
+            for rho_candidate in rho_candidates
                 # For rho_candidate = ½(ρ ± √Δ_ρ), the momentum discriminant reduces to
                 # -8ρ_c² + 8ρρ_c + ρv² = 2(ρ² - Δ_ρ) + ρv² (which is independent of
                 # rho_candidate).
-                discriminant_momentum = 2 * (rho^2 - discriminant_rho) +
-                                        rho_v1^2
+                discriminant_momentum = 2 * rho_squared_minus_discriminant + rho_v1^2
                 # Roundoff can make discriminant_momentum slightly negative at the real-root
                 # boundary; treat as zero so the >= 0 check passes and sqrt is valid.
                 if discriminant_momentum < zero(discriminant_momentum) &&

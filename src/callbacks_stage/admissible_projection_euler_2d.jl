@@ -75,22 +75,33 @@ function project_euler_lambda_zero_branch!(best_dist_squared, best_u, has_candid
     rho_v_primary, rho_v_secondary = use_v1_as_primary ? (rho_v1, rho_v2) :
                                      (rho_v2, rho_v1)
     a = 1 + (rho_v_secondary / rho_v_primary)^2
-    discriminant_rho = rho * rho -
-                       (2 * rho * rho_v_primary * rho_v_primary *
-                        (rho_e_total - rho_e_floor) -
-                        a * rho_v_primary^4) /
-                       (2 * rho_v_primary * rho_v_primary +
-                        (rho_e_floor + rho - rho_e_total)^2 / a)
+    # ρ² - Δ_ρ is kept separately so that it is not recovered by subtracting the
+    # nearly equal ρ² and Δ_ρ below; see admissible_projection_euler_1d.jl.
+    rho_squared_minus_discriminant = (2 * rho * rho_v_primary * rho_v_primary *
+                                      (rho_e_total - rho_e_floor) -
+                                      a * rho_v_primary^4) /
+                                     (2 * rho_v_primary * rho_v_primary +
+                                      (rho_e_floor + rho - rho_e_total)^2 / a)
+    discriminant_rho = rho * rho - rho_squared_minus_discriminant
     if discriminant_rho >= zero(discriminant_rho)
         sqrt_discriminant_rho = sqrt(discriminant_rho)
-        for rho_candidate in (0.5f0 * a_minus_sqrt_b_rationalized(rho,
-                                                          discriminant_rho,
-                                                          sqrt_discriminant_rho),
+        # The density candidates are ½(ρ ± √Δ_ρ). The root that adds terms of opposite
+        # sign (the minus root for ρ > 0, the plus root for ρ ≤ 0) suffers catastrophic
+        # cancellation, so it is evaluated as ½(ρ² - Δ_ρ) / (ρ ∓ √Δ_ρ) instead.
+        if rho > zero(rho)
+            rho_candidates = (0.5f0 * rho_squared_minus_discriminant /
+                              (rho + sqrt_discriminant_rho),
                               0.5f0 * (rho + sqrt_discriminant_rho))
+        else
+            rho_candidates = (0.5f0 * (rho - sqrt_discriminant_rho),
+                              0.5f0 * rho_squared_minus_discriminant /
+                              (rho - sqrt_discriminant_rho))
+        end
+        for rho_candidate in rho_candidates
             # For rho_candidate = ½(ρ ± √Δ_ρ), the momentum discriminant reduces to
             # -8aρ_c² + 8aρρ_c + (aρv)² = 2a(ρ² - Δ_ρ) + (aρv)² (which is independent of
             # rho_candidate).
-            discriminant_rho_v_primary = 2 * a * (rho^2 - discriminant_rho) +
+            discriminant_rho_v_primary = 2 * a * rho_squared_minus_discriminant +
                                          (a * rho_v_primary)^2
             # Roundoff can make discriminant_rho_v_primary slightly negative at the real-root
             # boundary; treat as zero so the >= 0 check passes.
